@@ -66,17 +66,90 @@ export const DEFAULTS = {
   /* Обидва сервери слухають усі інтерфейси: рев'ю відкривають з телефона й
      з іншої машини. Хочеш замкнути на локальну — став '127.0.0.1'. */
   host: '0.0.0.0',
-  executor: {
-    /* Чим сторож запускає правку. Порожній рядок = `~/.local/bin/claude`. */
+  /* Виконавці. Не один, а набір профілів: «прибери лінію» і «перебудуй
+     адмінську таблицю в картки» — різна робота, і платити за них однаково
+     немає причин. Профіль обирає класифікатор (див. `triage` нижче), а
+     сторож лише запускає обраний.
+
+     `order` — це і перелік профілів, і шкала: від слабкого до сильного.
+     ОСТАННІЙ у списку — сильний профіль, і саме він береться, коли
+     класифікатор упав, віддав сміття або спрацювала ескалація. Додати
+     третій рівень — це дописати профіль сюди й назвати його в `order`
+     та в шаблоні класифікатора; коду це не чіпає. */
+  executors: {
+    order: ['simple', 'complex'],
+    profiles: {
+      /* Детермінована правка: названий елемент, зрозуміла дія, відомий
+         токен, один-два селектори. Sonnet 5 тут акуратний і вчетверо
+         дешевший за Opus; більшість реальних нот саме такі. */
+      simple: {
+        /* Чим запускати. Порожній рядок = `~/.local/bin/claude`. */
+        command: '',
+        /* Аргументи. `{{BRIEF}}` — текст брифу, `{{MODEL}}` — поле `model`. */
+        args: ['-p', '{{BRIEF}}', '--model', '{{MODEL}}', '--dangerously-skip-permissions'],
+        /* Ім'я моделі йде в CLI аргументом, а не зашите в код. */
+        model: 'sonnet',
+        /* Підпис у колонці «Агент» історії правок. */
+        label: 'Sonnet 5',
+      },
+      /* У правці є рішення: формулювання без «як», спільний компонент із
+         багатьма споживачами, зміна композиції, або спершу треба зʼясувати
+         причину. Тут сильна модель окупається — і сюди ж падає все, у чому
+         класифікатор не впевнений. */
+      complex: {
+        command: '',
+        args: ['-p', '{{BRIEF}}', '--model', '{{MODEL}}', '--dangerously-skip-permissions'],
+        model: 'opus',
+        label: 'Opus 5',
+      },
+    },
+  },
+  /* Класифікатор — дешевий прогін перед виконавцем, який читає ноту й каже,
+     котрий профіль брати. Модель маленька, промпт короткий, таймаут у
+     секундах: це не робота, а рішення про роботу, і воно не має коштувати
+     як сама правка. Критерії живуть у `template`, не в коді. */
+  triage: {
+    /* Вимкнути = завжди брати сильний профіль (поведінка до маршрутизації). */
+    enabled: true,
     command: '',
-    /* Аргументи. `{{BRIEF}}` підставляється текстом брифу. */
-    args: ['-p', '{{BRIEF}}', '--dangerously-skip-permissions'],
-    /* Підпис у колонці «Агент» історії правок. */
-    label: 'Opus 5',
+    /* `{{PROMPT}}` — текст промпта класифікатора, `{{MODEL}}` — поле `model`. */
+    args: ['-p', '{{PROMPT}}', '--model', '{{MODEL}}'],
+    model: 'haiku',
+    /* Свій таймаут, короткий. Класифікатор, який думає хвилину, з'їдає ту
+       саму економію, заради якої він є. Шістдесят — бо на живому прогін
+       класифікатора займав 14–38 с, і верхня межа там була саме тоді, коли
+       поруч працювали чотири виконавці. */
+    timeoutS: 60,
+    /* Файл шаблона поруч із `brief-template.md`. */
+    template: 'triage-template.md',
+  },
+  /* Консультант. Раніше виконавець, якому неясно, дописував питання в тред і
+     повертав ноту в `pending` — і вона стояла, доки людина не відповість.
+     Тобто конвеєр, збудований щоб прибрати людину з кінця `notes_watch`,
+     повертав її ж у середину. Тепер питання йде до консультанта: сильна
+     модель, яка нічого не править, а лише ухвалює рішення, і виконавець це
+     рішення виконує в тому ж прогоні.
+
+     Ім'я моделі окремим полем навмисно: питання ціни відкрите, і замінити
+     `fable` на `opus` має бути одним рядком у конфізі, а не правкою коду.
+     Таймаут теж свій — консультант, що думає довше за саму правку, це не
+     консультація, а зупинка. */
+  consultant: {
+    /* `false` = стара поведінка: питання → `pending` → чекаємо людину. */
+    enabled: true,
+    command: '',
+    /* `{{PROMPT}}` — текст запиту до консультанта, `{{MODEL}}` — поле `model`. */
+    args: ['-p', '{{PROMPT}}', '--model', '{{MODEL}}'],
+    model: 'fable',
+    timeoutS: 300,
+    template: 'consultant-template.md',
   },
   watchdog: {
-    /* Стеля одночасних виконавців: кожен — повноцінна сесія з правками файлів. */
-    maxWorkers: 2,
+    /* Стеля одночасних виконавців: кожен — повноцінна сесія з правками файлів.
+       Чотири безпечні лише тому, що сторож не пускає два прогони на один
+       екран (замок за роутом і верхнім компонентом), інакше вони правили б
+       одні файли одночасно. */
+    maxWorkers: 4,
     /* Прогін без стелі висить вічно й тримає ноту в `working`. */
     runTimeoutMin: 15,
     /* Довжина одного довгого опитування нот. */
@@ -139,6 +212,70 @@ const fileExec = file.executor && typeof file.executor === 'object' ? file.execu
 const fileWd = file.watchdog && typeof file.watchdog === 'object' ? file.watchdog : {}
 const d = DEFAULTS
 
+/* ── Виконавці ────────────────────────────────────────────────────────────
+   Профілі збираються по одному: дефолт → однойменний профіль із файлу.
+   Старий однопрофільний ключ `executor` (він лежить у вже згенерованих
+   `harness.config.json`) не викидаємо, а читаємо як налаштування СИЛЬНОГО
+   профілю: до маршрутизації ним ішло все, тож саме таке успадкування нічого
+   нікому не ламає. */
+const DEFAULT_CLAUDE = join(homedir(), '.local/bin/claude')
+
+const fileExecutors =
+  file.executors && typeof file.executors === 'object' ? file.executors : {}
+const fileProfiles =
+  fileExecutors.profiles && typeof fileExecutors.profiles === 'object'
+    ? fileExecutors.profiles
+    : {}
+
+/* Порядок — джерело істини про те, який профіль сильний (останній). Крива
+   послідовність тут коштувала б дорожче за скаргу: маршрутизація мовчки
+   поїхала б не туди, і зрозуміти це можна було б лише за рахунком. */
+function resolveOrder() {
+  const raw = Array.isArray(fileExecutors.order) ? fileExecutors.order : d.executors.order
+  const names = raw.filter((n) => typeof n === 'string' && n)
+  const known = names.filter((n) => n in d.executors.profiles || n in fileProfiles)
+  if (!known.length) {
+    complaints.push(
+      `executors.order=${JSON.stringify(raw)} не називає жодного відомого профілю — беру [${d.executors.order}]`,
+    )
+    return [...d.executors.order]
+  }
+  for (const n of names) {
+    if (!known.includes(n)) complaints.push(`executors.order містить невідомий профіль "${n}" — пропускаю`)
+  }
+  return known
+}
+
+const executorOrder = resolveOrder()
+const strongestName = executorOrder[executorOrder.length - 1]
+
+function buildProfile(name) {
+  const base = d.executors.profiles[name] || d.executors.profiles[d.executors.order.at(-1)]
+  const over = fileProfiles[name] && typeof fileProfiles[name] === 'object' ? fileProfiles[name] : {}
+  /* Спадок від старого `executor`: тільки сильному профілю й тільки там,
+     де новий ключ мовчить. */
+  const legacy = name === strongestName ? fileExec : {}
+  const pick = (key) => (over[key] !== undefined ? over[key] : legacy[key])
+  const args = pick('args')
+  return {
+    name,
+    command: envStr('WATCHDOG_CLAUDE', pick('command') || base.command) || DEFAULT_CLAUDE,
+    args: Array.isArray(args) && args.length ? args : base.args,
+    model: pick('model') || base.model,
+    label:
+      (name === strongestName ? envStr('WATCHDOG_AGENT_LABEL', pick('label') || base.label) : null) ||
+      pick('label') ||
+      base.label,
+  }
+}
+
+const executorProfiles = Object.fromEntries(executorOrder.map((n) => [n, buildProfile(n)]))
+
+const fileTriage = file.triage && typeof file.triage === 'object' ? file.triage : {}
+const triageArgs = Array.isArray(fileTriage.args) && fileTriage.args.length ? fileTriage.args : d.triage.args
+const fileCons = file.consultant && typeof file.consultant === 'object' ? file.consultant : {}
+const consArgs = Array.isArray(fileCons.args) && fileCons.args.length ? fileCons.args : d.consultant.args
+
 const projectRoot = resolve(
   envStr('HARNESS_PROJECT_ROOT', file.projectRoot || d.projectRoot),
 )
@@ -156,14 +293,38 @@ export const config = {
     max: 65535,
   }),
   host: envStr('HARNESS_HOST', file.host || d.host),
-  executor: {
-    /* `WATCHDOG_CLAUDE` лишено назвою заради сумісності зі старими скриптами
-       й юнітами, які її вже передають. */
-    command:
-      envStr('WATCHDOG_CLAUDE', fileExec.command || d.executor.command) ||
-      join(homedir(), '.local/bin/claude'),
-    args: Array.isArray(fileExec.args) && fileExec.args.length ? fileExec.args : d.executor.args,
-    label: envStr('WATCHDOG_AGENT_LABEL', fileExec.label || d.executor.label),
+  executors: {
+    order: executorOrder,
+    profiles: executorProfiles,
+  },
+  /* Читабельний скорочений доступ: `executor` — це сильний профіль. Він же
+     дефолт на випадок, коли маршрутизувати нема чим (класифікатор вимкнено,
+     упав, або взагалі не було чого класифікувати). Друга причина лишити
+     ключ — `setup.mjs` і старі скрипти вже його читають. */
+  executor: executorProfiles[strongestName],
+  triage: {
+    enabled: fileTriage.enabled === undefined ? d.triage.enabled : Boolean(fileTriage.enabled),
+    /* Той самий `WATCHDOG_CLAUDE`: бінарник у класифікатора і виконавця один. */
+    command: envStr('WATCHDOG_CLAUDE', fileTriage.command || d.triage.command) || DEFAULT_CLAUDE,
+    args: triageArgs,
+    model: fileTriage.model || d.triage.model,
+    timeoutS: envInt('WATCHDOG_TRIAGE_TIMEOUT_S', num(fileTriage.timeoutS, d.triage.timeoutS), {
+      min: 5,
+      max: 600,
+    }),
+    template: fileTriage.template || d.triage.template,
+  },
+  consultant: {
+    enabled: fileCons.enabled === undefined ? d.consultant.enabled : Boolean(fileCons.enabled),
+    command: envStr('WATCHDOG_CLAUDE', fileCons.command || d.consultant.command) || DEFAULT_CLAUDE,
+    args: consArgs,
+    model: fileCons.model || d.consultant.model,
+    timeoutS: envInt(
+      'WATCHDOG_CONSULTANT_TIMEOUT_S',
+      num(fileCons.timeoutS, d.consultant.timeoutS),
+      { min: 10, max: 3600 },
+    ),
+    template: fileCons.template || d.consultant.template,
   },
   watchdog: {
     maxWorkers: envInt('WATCHDOG_MAX_WORKERS', num(fileWd.maxWorkers, d.watchdog.maxWorkers), {

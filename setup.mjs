@@ -130,7 +130,10 @@ const cfg = {
   notesPort: intOpt('notes-port', existing.notesPort, DEFAULTS.notesPort),
   ratingsPort: intOpt('ratings-port', existing.ratingsPort, DEFAULTS.ratingsPort),
   host: existing.host || DEFAULTS.host,
-  executor: { ...DEFAULTS.executor, ...(existing.executor || {}) },
+  /* Профілі виконавців і класифікатор злиті поверхнево: вкладені профілі
+     людина править руками, і глибоке злиття тут затирало б її правки. */
+  executors: { ...DEFAULTS.executors, ...(existing.executors || {}) },
+  triage: { ...DEFAULTS.triage, ...(existing.triage || {}) },
   watchdog: { ...DEFAULTS.watchdog, ...(existing.watchdog || {}) },
 }
 
@@ -498,13 +501,21 @@ printBox('ЩО ТИ ТЕПЕР УМІЄШ', CAPS)
 /* ── Що робиться саме ─────────────────────────────────────────────────────
    Другий блок навмисне без рамки: це не довідник, до якого повертаються, а
    один раз прочитане пояснення — і рядок про дозволи в ньому головний. */
-const skipsPerms = (cfg.executor.args || []).includes('--dangerously-skip-permissions')
+/* Виконавців тепер кілька; для тексту нижче беремо сильний профіль —
+   останній у `order` — і питання про дозволи ставимо по ньому. */
+const strongProfile =
+  cfg.executors.profiles[cfg.executors.order[cfg.executors.order.length - 1]] || {}
+const executorLabels = cfg.executors.order
+  .map((n) => (cfg.executors.profiles[n] || {}).label)
+  .filter(Boolean)
+  .join(' / ')
+const skipsPerms = (strongProfile.args || []).includes('--dangerously-skip-permissions')
 console.log('')
 console.log('А це відбувається саме́, без тебе:')
 console.log('')
 console.log(`  ·  Сторож висить на довгому опитуванні сервера нот (${cfg.watchdog.watchTimeoutS} с) —`)
 console.log('     нова нота підхоплюється за секунди, а не за наступний тік.')
-console.log(`  ·  Він бере її в роботу й запускає виконавця (${cfg.executor.label}); одночасних`)
+console.log(`  ·  Він бере її в роботу й запускає виконавця (${executorLabels}); одночасних`)
 console.log(`     прогонів — до ${cfg.watchdog.maxWorkers}, стеля одного ${cfg.watchdog.runTimeoutMin} хв.`)
 console.log('  ·  Після правки ноту закриває сам: тека data/fixes/<id>/ (запит із')
 console.log('     тредом, кадр, лог прогону), індекс data/fixlog.md перезбирається,')

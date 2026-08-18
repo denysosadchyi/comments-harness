@@ -57,6 +57,7 @@ import path from 'node:path'
 
 import { buildIndex } from '../server/build-index.mjs'
 import config, { configComplaints } from '../config.mjs'
+import { readTemplate, renderTemplate } from './template.mjs'
 
 const HERE = import.meta.dirname
 /* Корінь проєкту-господаря: там стартує виконавець. Береться з конфіга, а не
@@ -111,13 +112,20 @@ const REWORK_POLL_MS = config.watchdog.reworkPollS * 1000
    привʼязана до тексту ітерації: користувач переписав зауваження — лічильник
    з нуля, бо це вже інший запит. */
 const REWORK_MAX_ATTEMPTS = config.watchdog.reworkAttempts
-/* Виконавець: чим і з якими аргументами запускати правку. Обидва — з конфіга,
-   бо це найперше, що міняється в чужому проєкті (інший шлях до бінарника,
-   інша модель, інший набір прапорців). `{{BRIEF}}` в аргументах — місце, куди
-   підставляється текст брифу. */
-const CLAUDE = config.executor.command
-const EXECUTOR_ARGS = config.executor.args
-const executorArgv = (brief) => EXECUTOR_ARGS.map((a) => a.replaceAll('{{BRIEF}}', brief))
+/* Виконавці: не один, а набір профілів із конфіга (`executors.order` —
+   від слабкого до сильного, `executors.profiles` — чим і як запускати).
+   Профіль обирає класифікатор; сторож лише запускає обраний. Усе, що
+   міняється в чужому проєкті (шлях до бінарника, модель, набір прапорців),
+   лишається в конфізі. `{{BRIEF}}` в аргументах — місце під текст брифу,
+   `{{MODEL}}` — під імʼя моделі профілю. */
+const EXECUTOR_ORDER = config.executors.order
+const EXECUTOR_PROFILES = config.executors.profiles
+/* Сильний профіль — останній у порядку. Він же дефолт на всі випадки, коли
+   маршрутизувати нема чим: класифікатор вимкнено, впав, віддав сміття, або
+   спрацювала ескалація. Помилятись у бік якості дешевше, ніж у бік ціни. */
+const STRONG = EXECUTOR_PROFILES[EXECUTOR_ORDER[EXECUTOR_ORDER.length - 1]]
+const executorArgv = (profile, brief) =>
+  profile.args.map((a) => a.replaceAll('{{BRIEF}}', brief).replaceAll('{{MODEL}}', profile.model))
 
 /* Коди виходу розведені навмисно, бо на них дивиться systemd
    (`RestartPreventExitStatus=0` у юніті):
@@ -136,10 +144,9 @@ const LOG_KEEP_BYTES = 1024 * 1024
 const HARNESS = path.resolve(HERE, '..')
 const DATA_DIR = path.join(HARNESS, 'data')
 const FIXES_DIR = path.join(DATA_DIR, 'fixes')
-/* Колонка «Агент» — смуга виконавця, а не назва процесу. Сторож запускає
-   `claude -p` на моделі з налаштувань, тож підпис константний і міняється
-   разом із моделлю, не з нотою. */
-const AGENT_LABEL = config.executor.label
+/* Колонка «Агент» — смуга виконавця, а не назва процесу. Підпис береться з
+   профілю, яким правку зробили: відколи профілів кілька, константа тут
+   означала б, що історія бреше про половину правок. */
 
 /* ────────────────────────────── лог ────────────────────────────── */
 
@@ -344,7 +351,23 @@ function carry(src, dstDir, name, staged) {
 
 /* Тека створюється атомарно: збираємо у `.tmp-…` поруч і перейменовуємо.
    Читач індексу або рев'ю-сторінка не мають спіймати напівтеку. */
-function writeFix(note, { ms, runLog, closedAt = new Date() }) {
+/* Слід консультацій, які виконавець устиг зробити за цей прогін. Пише його
+   `ask-consultant.mjs` поруч зі стором, бо теки правки в той момент ще немає;
+   підбираємо тут і кладемо в `fix.json` поруч із рішенням класифікатора —
+   щоб питання ціни закривалося цифрами, а не здогадкою. */
+const CONSULTS_DIR = path.join(DATA_DIR, 'consults')
+
+function readConsults(id) {
+  const file = path.join(CONSULTS_DIR, `${id}.json`)
+  try {
+    const all = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return Array.isArray(all) && all.length ? { file, all } : null
+  } catch {
+    return null
+  }
+}
+
+function writeFix(note, { ms, runLog, closedAt = new Date(), profile = STRONG, triage = null }) {
   const dir = path.join(FIXES_DIR, note.id)
   if (fs.existsSync(dir)) {
     log(`УВАГА ${note.id} · тека правки вже існує — не переписую (тека незмінна після створення)`)
@@ -359,6 +382,10 @@ function writeFix(note, { ms, runLog, closedAt = new Date() }) {
     const shotSrc = note.shot ? path.join(DATA_DIR, note.shot) : null
     const shot = carry(shotSrc, tmp, 'shot.png', staged)
     carry(runLog, tmp, 'run.log', staged)
+    /* Слід консультацій — у `staged`, тобто прибереться разом із оригіналом
+       кадру, після того як ноти вже не буде. */
+    const consults = readConsults(note.id)
+    if (consults) staged.push(consults.file)
 
     const did = flat(doneText(note))
     const fix = {
@@ -377,7 +404,21 @@ function writeFix(note, { ms, runLog, closedAt = new Date() }) {
       rect: note.rect || null,
       viewport: note.viewport || null,
       lane: 'claude',
-      agent: AGENT_LABEL,
+      agent: profile.label,
+      /* Рішення маршрутизації лягає в теку разом із правкою — інакше правило
+         нема як уточнювати: видно, що чим зроблено, і де класифікатор
+         помилився. `source` каже, хто вирішив: сам класифікатор, ескалація
+         поверх нього, чи запасний варіант після його відмови. */
+      triage: triage || {
+        level: profile.name,
+        why: 'маршрутизації не було',
+        source: 'default',
+        model: null,
+      },
+      /* Скільки разів виконавець ходив до консультанта, по скільки секунд і
+         що вирішено. Порожній список — теж відповідь: правку зробили без
+         жодної консультації. */
+      consults: consults ? consults.all : [],
       did,
       files: filesFrom(did),
       shot,
@@ -511,33 +552,6 @@ function eventTime(note, sinceMs) {
 
 /* ────────────────────────────── бриф ────────────────────────────── */
 
-/* Один рушій на обидва шаблони — брифа правки і брифа доробки. Два різні
-   рушії розійшлися б у дрібницях (де «—», як ріжеться умовний блок), і
-   правити довелось би двічі. */
-function renderTemplate(tpl, values) {
-  /* Умовні блоки `{{#KEY}}…{{/KEY}}`: порожнє поле краще викинути разом із
-     підписом, ніж лишити «кадр: —». Порожній плейсхолдер читається як
-     «значення було, але загубилось». */
-  let out = tpl.replace(/\{\{#([A-Z_]+)\}\}\n?([\s\S]*?)\{\{\/\1\}\}\n?/g, (whole, key, inner) => {
-    const v = values[key]
-    return v === null || v === undefined || v === '' ? '' : inner
-  })
-  /* Підстановка ОДНОПРОХІДНА. Послідовні `split/join` по ключах розкривали б
-     плейсхолдери, що приїхали з даних: у `{{OUTERHTML}}` чи `{{NOTE}}` цілком
-     буває літерал `{{ID}}` (шаблонний рушій на сторінці, текст самої ноти), і
-     наступна ітерація підставила б у нього значення. Один прохід по регулярці
-     бере лише плейсхолдери самого шаблону; невідомий ключ лишаємо як є, щоб
-     помилку в шаблоні було видно, а не з'їдено. */
-  out = out.replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => {
-    if (!(key in values)) return whole
-    const raw = values[key]
-    return raw === null || raw === undefined || raw === '' ? '—' : String(raw)
-  })
-  return out
-}
-
-const readTemplate = (file) => fs.readFileSync(file, 'utf8').replace(/^<!--[\s\S]*?-->\n*/, '')
-
 /* Шаблон читаємо на кожен запуск, а не один раз на старті: бриф правитимуть
    частіше за логіку, і правка тексту не має вимагати рестарту юніта. */
 function buildBrief(note) {
@@ -581,6 +595,15 @@ function buildBrief(note) {
     NOTE: note.note,
     THREAD: thread,
     NOTES_URL: NOTES_URL,
+  }
+  /* Гілка «незрозуміло» — рівно одна з двох, і вибирає її конфіг. Дві одразу
+     означали б бриф, який радить і питати консультанта, і зупинитись. */
+  if (config.consultant.enabled) {
+    values.CONSULT = 'yes'
+    /* Шлях від кореня проєкту: виконавець стартує саме там. */
+    values.CONSULT_CMD = path.relative(REPO, path.join(HERE, 'ask-consultant.mjs'))
+  } else {
+    values.ASKHUMAN = 'yes'
   }
   if (shotAbs) values.SHOT = shotAbs
   Object.assign(values, spacingValues(note))
@@ -661,6 +684,11 @@ function reworkHistory(rating) {
     .join('\n')
 }
 
+/* Скільки разів правку повертали, рахуючи цей раз. Те саме число йде в
+   бриф доробки і в контекст класифікатора. */
+const reworkRound = (rating) =>
+  (Array.isArray(rating?.reworks) ? rating.reworks : rating?.rework ? [rating.rework] : []).length
+
 function buildReworkBrief(fix, rating, iteration) {
   const tpl = readTemplate(REWORK_TEMPLATE_FILE)
   const dir = fixDirOf(fix.id)
@@ -688,14 +716,198 @@ function buildReworkBrief(fix, rating, iteration) {
     WHY: iteration.note,
     WHEN: iteration.at,
     /* Номер підходу: скільки разів правку вже повертали, рахуючи цей раз. */
-    ROUND: String(
-      (Array.isArray(rating?.reworks) ? rating.reworks : rating?.rework ? [rating.rework] : []).length,
-    ),
+    ROUND: String(reworkRound(rating)),
     HISTORY: reworkHistory(rating),
     RATINGS_URL,
   }
   if (shotAbs) values.SHOT = shotAbs
   return renderTemplate(tpl, values)
+}
+
+/* ──────────────────────────── класифікатор ──────────────────────────── */
+
+/*
+  Вибір виконавця перед запуском. Досі профіль був один, і «прибери лінію»
+  їхало тим самим, що й «перебудуй адмінську таблицю в картки»; більшість
+  реальних нот — акуратність, а не міркування, і сильна модель там платиться
+  дарма. Тому перед виконавцем іде короткий дешевий прогін, який читає ноту й
+  каже, котрий профіль брати.
+
+  Критерій той самий, за яким маршрутизувала людина: чи можна виконати правку,
+  НЕ ухвалюючи рішень. Живе він у `triage-template.md`, не тут — уточнювати
+  його доведеться частіше, ніж цей код.
+
+  Три речі, які роблять це надійним:
+  - таймаут свій і короткий (`triage.timeoutS`). Класифікатор, який думає
+    хвилину, зʼїдає ту саму економію, заради якої він є;
+  - будь-яка його відмова — не зупинка конвеєра, а сильний профіль і рядок у
+    лог. Помилятись у бік якості дешевше, ніж у бік ціни;
+  - рішення з причиною їде в лог і в теку правки. Без цього правило нема як
+    уточнювати: не видно, що чим зроблено і де маршрутизація помилилась.
+*/
+const TRIAGE_TEMPLATE_FILE = path.join(HERE, config.triage.template)
+const TRIAGE_TIMEOUT_MS = config.triage.timeoutS * 1000
+
+/* Профіль за імʼям рівня. Невідоме імʼя — не привід падати: класифікатор
+   міг вигадати рівень, якого в конфізі немає, і це рівно той випадок, коли
+   треба взяти сильний. */
+const profileFor = (level) => EXECUTOR_PROFILES[level] || null
+
+function buildTriagePrompt(note, { rework = null } = {}) {
+  const tpl = readTemplate(TRIAGE_TEMPLATE_FILE)
+  const values = {
+    NOTE: note.note,
+    ROUTE: routeOf(note) || note.url,
+    SELECTOR: note.selector,
+    COMPONENTS: (note.components || []).join(' → '),
+    LEVELS: EXECUTOR_ORDER.join('|'),
+  }
+  /* Гейти умовних блоків. Порожнє поле краще викинути разом із підписом:
+     «кадр: —» читається як загублений файл, а не як «кадру немає». */
+  if (note.spacing && typeof note.spacing === 'object') values.SPACING = 'yes'
+  if (note.shot) values.SHOT = 'yes'
+  if (rework) {
+    values.REWORK = 'yes'
+    values.ROUND = String(rework.round || 1)
+  }
+  return renderTemplate(tpl, values)
+}
+
+/* Строгий JSON, але модель — це модель: вона може обгорнути відповідь у
+   ```json, дописати рядок до чи після. Тому беремо ПЕРШИЙ обʼєкт у виводі, а
+   не парсимо весь текст: сміття навколо не має коштувати нам маршрутизації. */
+function parseTriage(text) {
+  const raw = String(text || '')
+  const at = raw.indexOf('{')
+  if (at === -1) return null
+  const end = raw.indexOf('}', at)
+  if (end === -1) return null
+  let parsed
+  try {
+    parsed = JSON.parse(raw.slice(at, end + 1))
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const level = typeof parsed.level === 'string' ? parsed.level.trim() : ''
+  if (!profileFor(level)) return null
+  return { level, why: flat(parsed.why).slice(0, 200) || 'без пояснення' }
+}
+
+/* Прогін класифікатора. Ніколи не кидає: будь-який кінець, крім чистого
+   JSON із відомим рівнем, — це `null`, і викликач бере сильний профіль. */
+function runTriage(prompt) {
+  return new Promise((resolve) => {
+    const t = config.triage
+    const argv = t.args.map((a) => a.replaceAll('{{PROMPT}}', prompt).replaceAll('{{MODEL}}', t.model))
+    let child
+    try {
+      child = spawn(t.command, argv, {
+        cwd: REPO,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
+        env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: `${config.prefix}-triage` },
+      })
+    } catch (err) {
+      resolve({ ok: false, why: `не запустився: ${err.message}` })
+      return
+    }
+    let out = ''
+    let err = ''
+    let settled = false
+    const finish = (v) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(v)
+    }
+    const timer = setTimeout(() => {
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        /* уже помер сам */
+      }
+      finish({ ok: false, why: `не вклався у ${t.timeoutS} с` })
+    }, TRIAGE_TIMEOUT_MS)
+    child.stdout.on('data', (b) => {
+      out += b
+      /* Стеля на вивід: відповідь — один рядок JSON, і мегабайти тут можуть
+         означати лише те, що модель пішла писати твір. */
+      if (out.length > 8192) out = out.slice(0, 8192)
+    })
+    child.stderr.on('data', (b) => {
+      err += b
+      if (err.length > 2048) err = err.slice(0, 2048)
+    })
+    child.on('error', (e) => finish({ ok: false, why: `не запустився: ${e.message}` }))
+    child.on('close', (code) => {
+      if (code !== 0) {
+        finish({ ok: false, why: `вийшов з кодом ${code}${err ? `: ${oneLine(err)}` : ''}` })
+        return
+      }
+      const parsed = parseTriage(out)
+      if (!parsed) {
+        finish({ ok: false, why: `не розібрали відповідь: «${oneLine(out) || 'порожньо'}»` })
+        return
+      }
+      finish({ ok: true, ...parsed })
+    })
+  })
+}
+
+/*
+  Рішення про виконавця цілком: класифікатор плюс ескалація поверх нього.
+
+  Ескалація не питає класифікатора. Незалежно від його рішення сильний
+  профіль береться, коли користувач уже сказав «не влаштувало» (доробка) або
+  коли нота повертається вдруге після питання агента — у треді є його репліка,
+  тобто механічної відповіді тут не знайшлось уже раз. Це дешева страховка на
+  випадок, коли класифікатор помилився в бік «просто».
+
+  Класифікатор при цьому все одно біжить: його рішення записується поруч із
+  фактичним, і саме на цій парі видно, де критерії брешуть.
+*/
+async function decideProfile(note, { rework = null, escalate = null } = {}) {
+  if (!config.triage.enabled) {
+    return {
+      profile: STRONG,
+      triage: { level: STRONG.name, why: 'класифікатор вимкнено', source: 'default', model: null },
+    }
+  }
+  let verdict
+  try {
+    verdict = await runTriage(buildTriagePrompt(note, { rework }))
+  } catch (err) {
+    verdict = { ok: false, why: `прогін упав: ${err.message}` }
+  }
+  const model = config.triage.model
+  if (!verdict.ok) {
+    log(`МАРШРУТ ${note.id} · класифікатор не відповів (${verdict.why}) · беру ${STRONG.label}`)
+    return {
+      profile: STRONG,
+      triage: { level: STRONG.name, why: `класифікатор не відповів: ${verdict.why}`, source: 'fallback', model },
+    }
+  }
+  if (escalate && verdict.level !== STRONG.name) {
+    log(
+      `МАРШРУТ ${note.id} · класифікатор: ${verdict.level} («${verdict.why}») · ескалація: ${escalate} · беру ${STRONG.label}`,
+    )
+    return {
+      profile: STRONG,
+      triage: {
+        level: STRONG.name,
+        why: `${escalate}; класифікатор казав ${verdict.level}: ${verdict.why}`,
+        source: 'escalation',
+        model,
+      },
+    }
+  }
+  const profile = profileFor(verdict.level)
+  log(`МАРШРУТ ${note.id} · рівень ${verdict.level} · ${profile.label} · «${verdict.why}»`)
+  return {
+    profile,
+    triage: { level: verdict.level, why: verdict.why, source: escalate ? 'escalation' : 'classifier', model },
+  }
 }
 
 /* ─────────────────────────── черга й прогін ─────────────────────────── */
@@ -718,6 +930,78 @@ const starting = new Set()
 /* Нота «у нас в руках»: взята, працює або доробляється. Три множини замість
    однієї, бо кожна закриває своє вікно, а питання до них завжди спільне. */
 const inFlight = (id) => running.has(id) || starting.has(id) || finalizing.has(id)
+
+/* ── Замки за екраном ──────────────────────────────────────────────────────
+   Стеля виконавців піднята до чотирьох, і наосліп це не можна: два виконавці
+   в одному файлі — це зіпсована робота, а не подвоєна. Точного критерію
+   «той самий файл» наперед немає (які файли зачепить виконавець, відомо лише
+   постфактум), тож беремо грубу, але чесну проксі: РОУТ. Правки на одному
+   екрані майже завжди сходяться в один компонент і його CSS.
+
+   Другий ключ — верхній компонент ланцюга (`components[0]`). Він ловить те,
+   чого не ловить роут: два різні екрани, які тицьнули в один спільний
+   компонент. Обходиться дешево, а колізій знімає більше.
+
+   Зайнятий ключ не проганяє ноту з черги — вона паркується і повертається,
+   щойно попередній прогін закінчився. Викинути її означало б втратити;
+   лишити в черзі — крутити цикл на місці. */
+const busyKeys = new Map()
+const heldKeys = new Map()
+/* Завдання, чий екран зайнятий. У черзі їм не місце: `pump` брав би їх по
+   колу, поки вільні місця не скінчаться. */
+const parked = []
+
+const routeKeyOf = (url) => {
+  try {
+    return `r:${new URL(url).pathname}`
+  } catch {
+    return null
+  }
+}
+
+/* Ключі завдання: екран і верхній компонент. Обидва можуть бути невідомі —
+   тоді замка просто немає, і це краще за вигаданий ключ, який зчепив би між
+   собою непов'язані ноти. */
+function jobKeys({ url, components }) {
+  const keys = []
+  const route = routeKeyOf(url)
+  if (route) keys.push(route)
+  const top = Array.isArray(components) && components.length ? components[0] : null
+  if (top) keys.push(`c:${top}`)
+  return keys
+}
+
+const blockedBy = (id, keys) => {
+  for (const k of keys) {
+    const holder = busyKeys.get(k)
+    if (holder && holder !== id) return { key: k, holder }
+  }
+  return null
+}
+
+function lockKeys(id, keys) {
+  heldKeys.set(id, keys)
+  for (const k of keys) busyKeys.set(k, id)
+}
+
+function unlockKeys(id) {
+  const keys = heldKeys.get(id)
+  if (!keys) return
+  heldKeys.delete(id)
+  for (const k of keys) if (busyKeys.get(k) === id) busyKeys.delete(k)
+}
+
+/* Звільнився екран — паркування скінчилось. Повертаємо ВСІХ і даємо `pump`
+   розібратись: він однаково перевіряє ключі перед стартом, а вибирати тут
+   «кого саме розбудити» означало б тримати другу копію тієї самої логіки. */
+function releaseParked(why) {
+  if (!parked.length) return
+  const back = parked.splice(0, parked.length)
+  for (const job of back) {
+    if (!inFlight(job.id) && !queued(job.id)) queue.push(job)
+  }
+  log(`РОЗПАРКОВАНО ${back.length} · ${why} · у черзі ${queue.length}`)
+}
 /* «Брудні» ноти: подія прийшла, коли нота вже була в роботі. Курсор watch за
    такою подією вже зсунуто, тобто вдруге сервер її не віддасть — якщо просто
    викинути, відповідь користувача, написана під час прогону, зникне назовсім.
@@ -728,7 +1012,7 @@ const dirty = new Set()
    (доробка з рев'ю-сторінки). Черга одна навмисно — стеля виконавців у них
    спільна, бо спільний у них репозиторій, і «дві правки плюс дві доробки»
    означало б чотири Claude-сесії, що правлять одні файли. */
-const queued = (id) => queue.some((j) => j.id === id)
+const queued = (id) => queue.some((j) => j.id === id) || parked.some((j) => j.id === id)
 
 function enqueue(id, why) {
   if (inFlight(id)) {
@@ -808,10 +1092,27 @@ async function startWorker(id) {
     return
   }
 
+  /* Замок екрана — до `working`, а не після: нота, що чекає на звільнення
+     сусіда, не має мигати «в роботі» на рев'ю-сторінці. Беремо його ТУТ, а
+     не перед `spawn`: між перевіркою і стартом лежать і мережа, і прогін
+     класифікатора, і в це вікно другий `pump` устигав пропустити сусідню
+     ноту на той самий екран — перевірка без захоплення нічого не захищає. */
+  const keys = jobKeys(note)
+  const clash = blockedBy(id, keys)
+  if (clash) {
+    starting.delete(id)
+    parked.push({ kind: 'note', id })
+    log(`ПАРКУЮ ${id} · ${clash.key} зайнято нотою ${clash.holder} · візьму після її прогону`)
+    return
+  }
+  lockKeys(id, keys)
+
   try {
     await setStatus(id, 'working')
   } catch (err) {
     starting.delete(id)
+    unlockKeys(id)
+    releaseParked(`${id} не взято в роботу`)
     log(`ПОМИЛКА ${id} · не поставили working: ${err.message}`)
     return
   }
@@ -829,8 +1130,16 @@ async function startWorker(id) {
     fd = fs.openSync(runLog, 'a')
     fs.writeSync(fd, `=== ${new Date().toISOString()} нота ${id}\n=== ${note.url}\n=== «${note.note}»\n\n`)
 
+    /* Вибір виконавця — тут, перед запуском, і більше ніде. Ескалація:
+       нота, у треді якої вже є репліка агента, повертається до нас ВДРУГЕ
+       після питання — механічної відповіді тут одного разу не знайшлось. */
+    const asked = (note.thread || []).some((m) => m.role === 'agent')
+    const route = await decideProfile(note, {
+      escalate: asked ? 'нота повернулась після питання агента' : null,
+    })
+
     const brief = buildBrief(note)
-    const child = spawn(CLAUDE, executorArgv(brief), {
+    const child = spawn(route.profile.command, executorArgv(route.profile, brief), {
       cwd: REPO,
       stdio: ['ignore', fd, fd],
       /* Своя група процесів: `claude` плодить дітей (node, tsc, vite), і по
@@ -840,7 +1149,7 @@ async function startWorker(id) {
     })
 
     const startedAt = Date.now()
-    const entry = { child, timer: null, runLog, startedAt, timedOut: false }
+    const entry = { child, timer: null, runLog, startedAt, timedOut: false, route }
     const timer = setTimeout(() => {
       /* Перевірка перед `kill(-pid)`: `clearTimeout` стоїть в обробнику
          `close`, тобто між смертю процесу і подією є вікно, у якому pid уже
@@ -867,7 +1176,9 @@ async function startWorker(id) {
        чи машину перезавантажили посеред прогону і виконавця давно немає.
        Разом із boot-id це відрізняє одне від одного (див. `sweepOrphans`). */
     rememberRun(id, child.pid, startedAt)
-    log(`СТАРТ ${id} · pid ${child.pid} · ${note.url} · «${oneLine(note.note)}» · лог ${path.basename(runLog)}`)
+    log(
+      `СТАРТ ${id} · pid ${child.pid} · ${route.profile.label} · ${note.url} · «${oneLine(note.note)}» · лог ${path.basename(runLog)}`,
+    )
 
     child.on('error', (err) => log(`ПОМИЛКА ${id} · не запустився виконавець: ${err.message}`))
     child.on('close', (code, signal) => {
@@ -882,14 +1193,20 @@ async function startWorker(id) {
       /* Нота лишається «зайнятою» до кінця фіналізації: інакше подія, що
          прилетить у це вікно, пройшла б повз `dirty` і повз чергу. */
       finalizing.add(id)
-      void finish(id, code, signal, runLog, Date.now() - startedAt, entry.timedOut).finally(() => {
-        finalizing.delete(id)
-        if (dirty.delete(id)) enqueue(id, 'подія, що прийшла під час прогону')
-        pump()
-      })
+      void finish(id, code, signal, runLog, Date.now() - startedAt, entry.timedOut, route).finally(
+        () => {
+          finalizing.delete(id)
+          unlockKeys(id)
+          releaseParked(`прогін ${id} закінчився`)
+          if (dirty.delete(id)) enqueue(id, 'подія, що прийшла під час прогону')
+          pump()
+        },
+      )
     })
   } catch (err) {
     starting.delete(id)
+    unlockKeys(id)
+    releaseParked(`старт ${id} не вдався`)
     if (fd !== null) {
       try {
         fs.closeSync(fd)
@@ -992,6 +1309,18 @@ async function startRework(id, iteration) {
     return
   }
 
+  /* Замок екрана — той самий, що й у ноти, тільки контекст беремо з теки
+     правки: доробка чіпає рівно той екран, який чіпала правка. */
+  const keys = jobKeys({ url: fix.url, components: fix.components })
+  const clash = blockedBy(id, keys)
+  if (clash) {
+    starting.delete(id)
+    parked.push({ kind: 'rework', id, iteration })
+    log(`ПАРКУЮ-ДОРОБКУ ${id} · ${clash.key} зайнято нотою ${clash.holder} · візьму після її прогону`)
+    return
+  }
+  lockKeys(id, keys)
+
   let fd = null
   let runLog = null
   try {
@@ -1001,8 +1330,17 @@ async function startRework(id, iteration) {
     fd = fs.openSync(runLog, 'a')
     fs.writeSync(fd, `=== ${new Date().toISOString()} доробка ${id}\n=== «${oneLine(iteration.note)}»\n\n`)
 
+    /* Доробка — завжди сильний профіль: користувач уже сказав «не
+       влаштувало», і другий підхід тією ж моделлю статистично дає те саме.
+       Класифікатор при цьому все одно біжить — його рішення записується
+       поруч, і саме на цій парі буде видно, чи ескалація виправдана. */
+    const route = await decideProfile(
+      { id, note: fresh.rework.note, url: fix.url, selector: fix.selector, components: fix.components },
+      { rework: { round: Number(reworkRound(fresh)) || 1 }, escalate: 'доробка: попередня спроба не влаштувала' },
+    )
+
     const brief = buildReworkBrief(fix, fresh, fresh.rework)
-    const child = spawn(CLAUDE, executorArgv(brief), {
+    const child = spawn(route.profile.command, executorArgv(route.profile, brief), {
       cwd: REPO,
       stdio: ['ignore', fd, fd],
       detached: true,
@@ -1033,7 +1371,9 @@ async function startRework(id, iteration) {
        ребутом, не лишає по собі сліду — а ітерація лишається відкритою, і
        після рестарту сторож бере її знову, і так по колу. */
     countAttempt(id, iteration.at)
-    log(`СТАРТ-ДОРОБКА ${id} · pid ${child.pid} · підхід ${(runState.reworks[id] || {}).attempts} · «${oneLine(iteration.note)}» · лог ${path.basename(runLog)}`)
+    log(
+      `СТАРТ-ДОРОБКА ${id} · pid ${child.pid} · ${route.profile.label} · підхід ${(runState.reworks[id] || {}).attempts} · «${oneLine(iteration.note)}» · лог ${path.basename(runLog)}`,
+    )
 
     child.on('error', (err) => log(`ПОМИЛКА ${id} · не запустився виконавець доробки: ${err.message}`))
     child.on('close', (code, signal) => {
@@ -1049,6 +1389,8 @@ async function startRework(id, iteration) {
       void finishRework(id, iteration, code, signal, runLog, Date.now() - startedAt, entry.timedOut).finally(
         () => {
           finalizing.delete(id)
+          unlockKeys(id)
+          releaseParked(`доробка ${id} закінчилась`)
           if (dirty.delete(id)) enqueue(id, 'подія, що прийшла під час прогону')
           pump()
         },
@@ -1056,6 +1398,8 @@ async function startRework(id, iteration) {
     })
   } catch (err) {
     starting.delete(id)
+    unlockKeys(id)
+    releaseParked(`старт доробки ${id} не вдався`)
     if (fd !== null) {
       try {
         fs.closeSync(fd)
@@ -1127,10 +1471,10 @@ async function finishRework(id, iteration, code, signal, runLog, ms, timedOut = 
    Тека і є пам'ять про правку, тож видаляти ноту можна лише після того, як
    вона записана. Не записалась — нота лишається у сторі, краще хай повисить,
    ніж зникне безслідно. */
-async function closeNote(note, { ms, runLog }) {
+async function closeNote(note, { ms, runLog, profile, triage }) {
   let written
   try {
-    written = await saveFix(note, { ms, runLog })
+    written = await saveFix(note, { ms, runLog, profile, triage })
   } catch (err) {
     log(`ПОМИЛКА ${note.id} · не записали теку правки: ${err.message} · ноту лишаю у сторі`)
     return false
@@ -1151,7 +1495,7 @@ async function closeNote(note, { ms, runLog }) {
    виконавець сам поставив `resolved`; виконавець сам повернув `pending`,
    дописавши питання; або він упав — і тоді `pending` та рядок у треді
    ставить сторож, щоб користувач бачив поломку, а не гадав. */
-async function finish(id, code, signal, runLog, ms, timedOut = false) {
+async function finish(id, code, signal, runLog, ms, timedOut = false, route = null) {
   const mins = (ms / 60000).toFixed(1)
   let note
   try {
@@ -1166,7 +1510,7 @@ async function finish(id, code, signal, runLog, ms, timedOut = false) {
   }
   if (note.status === 'resolved') {
     log(`ГОТОВО ${id} · ${mins}хв · виконавець поставив resolved`)
-    await closeNote(note, { ms, runLog })
+    await closeNote(note, { ms, runLog, profile: route?.profile, triage: route?.triage })
     return
   }
   if (note.status === 'pending' && code === 0) {
