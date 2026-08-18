@@ -1,0 +1,20 @@
+[Unit]
+# ЗГЕНЕРОВАНО з server/notes.service.template — правити треба шаблон і
+# перезапустити `node setup.mjs`, інакше наступна інсталяція затре правку.
+#
+# Власник даних усього harness: сервер нот. Досі він піднімався руками, і це
+# було найслабше місце «сторож працює завжди» — сторож переживав відсутність
+# сервера, але без сервера черга не існує. Юніт прибирає останню ручну ланку.
+Description={{PREFIX}} comments-harness notes server (port {{NOTES_PORT}})
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{PROJECT_ROOT}}
+ExecStart={{NODE}} {{HARNESS_DIR}}/server/notes-server.mjs
+Restart=always
+RestartSec=3
+StandardInput=null
+
+[Install]
+WantedBy=default.target

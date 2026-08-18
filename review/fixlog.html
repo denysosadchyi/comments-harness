@@ -1,0 +1,3151 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Comments Harness</title>
+    <!-- Знак тулзи у вкладці: та сама скоба з пальцем і ноткою всередині, що
+         й у шапці, тільки в сітці 32 і на крок товщими лініями — у 16px слоті
+         тонка лінія просто зникає.
+
+         Колір тут жорсткий сірий, а не currentColor: фавікон малюється поза
+         документом, ніякого «поточного кольору» в нього немає, а нейтральний
+         сірий читається і на світлій, і на темній панелі вкладок однаково.
+
+         Data-URI, а не файл, бо цей <link> ще й носій крутілки-стану нижче:
+         скрипт бере його href як «спокійний» кадр і повертає його, коли
+         роботи немає. Один вузол — одне джерело обох станів. -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%238a8f98' stroke-width='2.9' stroke-linecap='round'%3E%3Cpath d='M9.9 9.9a8.3 8.3 0 1 0 12.2 0'/%3E%3Cpath d='M7.4 9.9h17.2'/%3E%3Ccircle cx='16' cy='15.4' r='2.5' fill='%238a8f98' stroke='none'/%3E%3C/svg%3E" />
+    <!-- Deliberately NOT the project's token layer. This page is a dev tool
+         with its own visual identity — every token it uses is defined in its
+         own style block, so it can never drift when the app restyles. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Inter carries the whole page — UI, prose and index data alike. The
+         page is sometimes opened from a LAN box with no internet, so the one
+         request left here is the one that matters, and --font-ui declares full
+         system fallbacks: offline just means plainer type, never broken
+         layout. Index data no longer needs a second family to line up —
+         font-variant-numeric: tabular-nums does that job inside Inter. -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      /* Theme is decided BEFORE the stylesheet paints anything: an explicit
+         choice from localStorage wins, otherwise the OS preference. Stamping
+         data-theme unconditionally means the CSS needs exactly one light
+         block and zero prefers-color-scheme duplication. */
+      document.documentElement.dataset.theme =
+        localStorage.getItem('fixlog-theme') ||
+        (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    </script>
+    <style>
+      /* ══════════════════════════════════════════════════════════════════════
+         Comments Harness — a scanning surface, styled as an instrument.
+
+         This page deliberately does NOT use the host app's token layer. It is a
+         dev tool that sits next to a terminal and a dark IDE, usually on a
+         second monitor, usually in the evening — so it dresses like the tools
+         around it (Linear, Vercel, Raycast), not like the product it observes.
+         Every token it needs is defined right here; nothing leaks in from
+         /assets/css/tokens.css and nothing leaks out.
+
+         The colour strategy is monochrome-plus-state: cool-tinted neutral
+         surfaces, full-contrast ink as the only "accent", and chroma spent
+         EXCLUSIVELY on meaning — amber is queued, blue is running, red is
+         sent back, green is a closed rework; done is a quiet checkbox,
+         because finished work is furniture, not news. If something on this
+         page is coloured, it is a state, never a decoration. That is what
+         keeps eight columns readable: colour is so rare that one glance finds
+         everything that needs a human.
+
+         And colour is never the ONLY carrier: every row spells its state out
+         in a word beside the dot. Colour makes a state findable; the word is
+         what makes it knowable.
+
+         Two themes, one grammar. Dark is the native habitat (terminal at
+         night); light exists for daylight and for sitting next to the light
+         app in the drawer. The light palette is weighed on its own — white
+         panels on a cool near-white ground, ink pulled darker, state hues
+         pulled darker to keep their contrast — not a lazy inversion. Every
+         theme-dependent value is a token; the rules below never branch.
+
+         One typeface, Inter, carries everything: UI, prose and INDEX data —
+         numbers, times, durations, ids, agent lanes. Index data is still set
+         apart, but by muted ink and tabular figures rather than by a second
+         family. tabular-nums is what keeps digits lining up down a column, and
+         that was the only load-bearing job the mono ever did here.
+
+         Hierarchy, loud to quiet — eight columns cannot all matter equally:
+
+           1. Запит — the meaning. It takes every pixel the fixed columns leave
+              over, in the brightest ink on the page.
+           2. Статус — categorical. A coloured DOT, not a chip: colour only
+              where it means "needs you". Зроблено is the resting state and
+              stays neutral, or nine rows in ten would be green.
+           3. Агент — supporting identity. Small, ink not a box.
+           4. # / Час / Трив. — index data. Tabular figures, muted, never
+              competing.
+           5. Деталі / Доробки — CONTROLS, not data. Past every content column,
+              at the right edge, drawn as bare glyphs of one size that hold
+              almost no ink until they are reached for.
+
+         Rework THREADS. A fix that was sent back grows child rows — one per
+         iteration, hung under the parent with branch marks (├ └ — drawn as
+         borders, not typed: see .branch), the
+         reviewer's note where the request would be, and the iteration's own
+         status and clock. The thread is the page's second subject: it is the
+         self-training corpus (request → what the agent did → why it was
+         rejected → what the redo fixed) made visible, so it reads as one
+         connected block, tinted while any iteration is still open.
+         ══════════════════════════════════════════════════════════════════════ */
+
+      :root {
+        /* Semantic stacking order, so nothing here is ever a magic 999. */
+        --z-sticky: 1;
+        --z-drawer: 50;
+        --z-modal:  60;
+
+        /* Одна гарнітура на всю сторінку. Роль, яку раніше ніс моноширинний
+           шрифт, — «машинне значення, яке ти цитуватимеш назад» — тепер несуть
+           приглушене чорнило й вирівнювання, а рівність цифр у колонці дає
+           tabular-nums. Другої родини тут немає навмисно: токен без споживачів
+           пережив би їх усіх і повернувся б у код першою ж правкою «як тут
+           прийнято». */
+        --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+        /* Small radii throughout — this is an instrument, not a card deck. */
+        --r-xs: 4px;
+        --r-sm: 6px;
+        --r-md: 8px;
+        --r-lg: 12px;
+
+        /* Fast and decisive: users are mid-task, choreography would be lag. */
+        --dur-fast: 120ms;
+        --dur: 200ms;
+        --ease-out: cubic-bezier(.22, 1, .36, 1);
+
+        /* ══ DARK — the default palette, also the fallback if the boot script
+           never ran. A tiny head script stamps data-theme before first paint
+           (localStorage choice, else prefers-color-scheme), so the light block
+           below only ever needs to exist once. ══ */
+
+        /* Native controls, scrollbars and form widgets follow the page instead
+           of flashing light-grey inside a dark tool. */
+        color-scheme: dark;
+
+        /* ── Surfaces ── one hue for the whole ground: a cool 265° tint at
+           whisper chroma, four lightness stops. The page is the darkest, panels
+           sit one stop up, hover one more — depth is lightness, never shadow,
+           because shadows die on a near-black ground. */
+        --bg:        oklch(0.165 0.008 265);  /* the page */
+        --bg-raised: oklch(0.205 0.009 265);  /* table shell, toolbar, dialogs */
+        --bg-hover:  oklch(0.245 0.010 265);  /* interactive rest → approach */
+        --bg-inset:  oklch(0.130 0.007 265);  /* code chips, inputs — carved in */
+        --row-hover: oklch(1 0 0 / 0.03);     /* the clickable-row affordance */
+        --scrim:     oklch(0 0 0 / 0.6);
+
+        /* Hairlines are ink-with-alpha, not painted greys: they composite
+           correctly over every surface stop above without a variant each. */
+        --line:        oklch(1 0 0 / 0.07);
+        --line-strong: oklch(1 0 0 / 0.14);
+        --line-hover:  oklch(1 0 0 / 0.22);
+
+        /* ── Ink ── four steps down from near-white. --faint is decorative
+           only (branch glyphs, disabled) — it does not pass text contrast and
+           must never carry words. */
+        --ink:   oklch(0.93 0.004 265);
+        --ink-2: oklch(0.80 0.006 265);
+        --muted: oklch(0.66 0.010 265);
+        --faint: oklch(0.50 0.010 265);
+
+        /* ── State — the only chroma on the page ── */
+        /* «Нова» має власний тон, а не той самий синій, що «в роботі». Раніше
+           їх різнило лише биття крапки — тобто на нерухомому кадрі (а це і є
+           те, що бачить око, коли пробігає таблицю) вони були нерозрізненні,
+           і черга читалась як робота. Бурштин — це «стоїть і чекає»; синій
+           лишається за тим, що зараз біжить. Від помаранчевого --lane-imp
+           тон рознесений на 45°, і живуть вони в різних стовпчиках. */
+        /* Нова, ніхто не взяв. Зелений тут не «готово», а «свіже, можна брати» —
+           саме так його читає власник черги, і саме цього він просив. Готове
+           живе сірою галочкою в архіві, тож за зелений вони не б'ються. */
+        --pending:      oklch(0.76 0.14 155);
+        --pending-soft: oklch(0.76 0.14 155 / 0.12);
+        --info:        oklch(0.72 0.13 245);         /* в роботі */
+        --info-soft:   oklch(0.72 0.13 245 / 0.09);
+        --info-sheen:  oklch(0.72 0.13 245 / 0.18);
+        --info-line:   oklch(0.72 0.13 245 / 0.35);
+        --danger:      oklch(0.71 0.17 25);          /* на доробці */
+        --danger-soft: oklch(0.71 0.17 25 / 0.10);
+        --danger-sheen: oklch(0.71 0.17 25 / 0.20);
+        --danger-line: oklch(0.71 0.17 25 / 0.35);
+        /* «Чекає на тебе» — єдиний стан БЕЗ власного тону, і це не економія
+           палітри, а сам зміст. Хрома на цій сторінці означає «тут щось
+           відбувається»: бурштин стоїть у черзі, синій біжить, червоний
+           вимагає. Тут не відбувається нічого — конвеєр зупинився і чекає
+           слова людини. Тому стан говорить чорнилом: слово на повну силу
+           --ink (найтемніший текст у стовпчику, поки решта станів — 11px
+           кольору), ґрунт рядка — нейтральний підйом, обідок крапки —
+           хайрлайн. Помітність тут дає вага, а не барва. */
+        --held-soft: oklch(1 0 0 / 0.055);           /* ґрунт рядка */
+        --held-line: oklch(1 0 0 / 0.30);            /* обідок порожньої крапки */
+        --success:     oklch(0.76 0.14 155);         /* rework closed */
+        --success-soft: oklch(0.76 0.14 155 / 0.12);
+        --lane-op:     oklch(0.78 0.11 195);         /* opencode — its own hue,
+                          deliberately NOT the wip blue: "who did it" and
+                          "what state is it in" must never look related. */
+        --lane-imp:    oklch(0.70 0.11 40);          /* ≈ #D97757 — Claude's
+                          brand orange, worn only when impeccable joined. */
+
+        /* One focus ring for every control. Blue, not white: on a monochrome
+           page a white ring is indistinguishable from a hover border. */
+        --ring: 0 0 0 1.5px oklch(0.72 0.13 245 / 0.75);
+
+        /* Panels rely on borders in the dark; the shadows are backup depth.
+           --shadow-card is none here on purpose: lightness steps do the
+           lifting, and a shadow on near-black is mud. */
+        --shadow-drawer: -24px 0 48px oklch(0 0 0 / 0.4);
+        --shadow-pop: 0 24px 48px oklch(0 0 0 / 0.5);
+        --shadow-card: none;
+        --shadow-stuck: 0 8px 16px -8px oklch(0 0 0 / 0.5);
+
+        /* The one filled button: on a monochrome tool the primary action is
+           ink-coloured — brighter than everything, coloured like nothing. */
+        --btn-primary-hover: oklch(1 0 0);
+      }
+
+      /* ══ LIGHT — weighed on its own, not inverted dark. White panels float
+         on a cool near-white ground (same 265° family, never a warm cream),
+         hairlines flip to black-alpha, and every state hue drops ~0.15 L so it
+         still clears text contrast on white. ══ */
+      :root[data-theme='light'] {
+        color-scheme: light;
+
+        --bg:        oklch(0.965 0.003 265);
+        --bg-raised: oklch(1 0 0);
+        --bg-hover:  oklch(0.945 0.004 265);
+        --bg-inset:  oklch(0.955 0.004 265);
+        --row-hover: oklch(0 0 0 / 0.025);
+        --scrim:     oklch(0.2 0.01 265 / 0.4);
+
+        --line:        oklch(0 0 0 / 0.08);
+        --line-strong: oklch(0 0 0 / 0.15);
+        --line-hover:  oklch(0 0 0 / 0.25);
+
+        --ink:   oklch(0.22 0.010 265);
+        --ink-2: oklch(0.36 0.012 265);
+        --muted: oklch(0.50 0.012 265);
+        --faint: oklch(0.72 0.008 265);
+
+        /* На білому бурштин 0.80 був би плямою без контрасту — тон опущено
+           так, щоб 11px підпис «New» тримав 4.5:1 на панелі. */
+        --pending:      oklch(0.52 0.13 155);
+        --pending-soft: oklch(0.52 0.13 155 / 0.10);
+        --info:        oklch(0.55 0.15 245);
+        --info-soft:   oklch(0.55 0.15 245 / 0.08);
+        --info-sheen:  oklch(0.55 0.15 245 / 0.15);
+        --info-line:   oklch(0.55 0.15 245 / 0.30);
+        --danger:      oklch(0.55 0.19 25);
+        --danger-soft: oklch(0.55 0.19 25 / 0.08);
+        --danger-sheen: oklch(0.55 0.19 25 / 0.16);
+        --danger-line: oklch(0.55 0.19 25 / 0.30);
+        --held-soft: oklch(0 0 0 / 0.045);
+        --held-line: oklch(0 0 0 / 0.34);
+        --success:     oklch(0.52 0.13 155);
+        --success-soft: oklch(0.52 0.13 155 / 0.10);
+        --lane-op:     oklch(0.52 0.10 210);
+        /* Darker than the brand swatch on purpose: #D97757 on white is a
+           ~3:1 glyph — enough for a mark, but a step of extra ink keeps it
+           unmistakable at 14px. */
+        --lane-imp:    oklch(0.62 0.12 40);
+
+        --ring: 0 0 0 1.5px oklch(0.55 0.15 245 / 0.6);
+
+        /* On white the border does less work, the shadow does more. */
+        --shadow-drawer: -16px 0 40px oklch(0.2 0.01 265 / 0.18);
+        --shadow-pop: 0 16px 40px oklch(0.2 0.01 265 / 0.22);
+        --shadow-card: 0 1px 2px oklch(0.2 0.01 265 / 0.05), 0 2px 8px oklch(0.2 0.01 265 / 0.04);
+        --shadow-stuck: 0 8px 16px -8px oklch(0.2 0.01 265 / 0.22);
+
+        --btn-primary-hover: oklch(0.10 0.01 265);
+      }
+
+      *,
+      *::before,
+      *::after { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 20px 20px 40px;
+        background: var(--bg);
+        color: var(--ink-2);
+        font: 400 13px/1.5 var(--font-ui);
+        -webkit-font-smoothing: antialiased;
+        /* The page is also the body of a 92%-wide drawer inside the app; it may
+           never push a horizontal scrollbar onto its host. The table scrolls
+           inside its own box instead. */
+        overflow-x: hidden;
+      }
+
+      /* Full width on purpose: the log is scanned, not read as prose, and it
+         lives inside a 92%-wide drawer. A measure cap would waste the space
+         the drawer exists to give. */
+      .wrap { width: 100%; margin: 0; }
+
+      /* A `display` declaration outranks the UA's `[hidden] { display: none }`,
+         so anything that sets display MUST restore the hidden case itself —
+         otherwise the element is permanently on screen. */
+      .pop[hidden], .dr[hidden], .dr__rate[hidden],
+      .pop__body[hidden], .pop__note[hidden], .pop__send[hidden] { display: none; }
+
+      /* ── Page head ────────────────────────────────────────────────────────
+         Title, tally, actions — one toolbar line (two rows once narrow, see
+         the 720px block). The tally carries the same
+         dots as the Статус column, in the same colours, so the column needs no
+         legend of its own. Counts take tabular figures: they are index data
+         like everything else the machine produced. */
+      /* Три слоти: знак із назвою, лічильники, дії. Сітка, а не flex, саме
+         заради середнього. Бокові доріжки — по 1fr кожна, тобто рівні за
+         побудовою, і смужка між ними стоїть на центрі СТОРІНКИ. У flex було
+         інакше: .tally центрувала вміст усередині залишку між двома боковими
+         блоками різної ширини, тож центр залежав від того, наскільки бренд
+         вужчий за дії, і їхав від будь-якої зміни в шапці. Тут ширина бренду
+         й дій на положення смужки не впливає взагалі — вони розсувають свою
+         доріжку, а не зсувають чужу.
+         1fr узято навмисно замість minmax(0, 1fr): доріжка не стискається
+         вужче за власний вміст, тому бокові блоки не мають чим заповзти під
+         смужку. У найгіршому разі (обидві доріжки вперлись у свій мінімум,
+         а мінімуми різні) центр з'їде — але накладення не буде ніколи. */
+      .head {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 8px 18px;
+        margin-bottom: 14px;
+      }
+      /* Знак і назва тримаються разом — один вузол, а не два елементи шапки,
+         інакше проміжок між ними правив би gap самої сітки. Це лівий слот,
+         притиснутий до початку рядка; на вільний простір він не претендує,
+         бо його ширину тепер диктує доріжка, а не сам блок. */
+      .brand {
+        display: flex;
+        justify-self: start;
+        align-items: center;
+        gap: 8px;
+      }
+      /* Колір знака — колір заголовка: сторінка тримає акцент за станами,
+         тож айдентика фарбується чорнилом, а не синім. Обидві теми дають
+         --ink власного значення, окремої правки для світлої не треба. */
+      .brand__mark { display: block; color: var(--ink); }
+      h1 {
+        margin: 0;
+        color: var(--ink);
+        font: 600 16px/1.3 var(--font-ui);
+        letter-spacing: -0.01em;
+      }
+      /* Лічильники — середня доріжка, тобто центр сторінки. Вільний простір
+         смужка більше не забирає (це й був колишній баг: вона центрувалась
+         у ньому, а не в сторінці) — доріжка йде по вмісту, тож числа
+         лишаються щільною групою.
+         min-width: 0 знімає з flex-контейнера автоматичний мінімум по вмісту:
+         коли місця бракує, стискатись і переноситись має саме смужка, а не
+         бокові блоки. justify-content тримає її рядки центрованими і після
+         переносу. */
+      .tally {
+        display: flex;
+        justify-self: center;
+        min-width: 0;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 4px 16px;
+        color: var(--muted);
+        font: 500 12px/1 var(--font-ui);
+      }
+      .tally__i { display: inline-flex; align-items: center; gap: 6px; }
+      .tally__i b {
+        color: var(--ink);
+        font: 600 12px/1 var(--font-ui);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Підказка, де саме відповідати, — не блок і не банер, а хвіст того
+         самого лічильника, і тільки поки є кому відповідати. */
+      .tally__hint { color: var(--faint); font-weight: 400; }
+
+      /* Правий слот. margin-left: auto тут був flex-розпіркою — у сітці його
+         роль виконує доріжка, а притискання до кінця рядка робить justify-self. */
+      .head__actions { display: flex; justify-self: end; align-items: center; gap: 8px; }
+      .reload {
+        padding: 5px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-sm);
+        background: var(--bg-raised);
+        color: var(--ink-2);
+        font: 500 12px/1.4 var(--font-ui);
+        cursor: pointer;
+        transition: color var(--dur-fast) var(--ease-out),
+                    border-color var(--dur-fast) var(--ease-out),
+                    background-color var(--dur-fast) var(--ease-out);
+      }
+      .reload:hover { background: var(--bg-hover); color: var(--ink); }
+      .reload:focus-visible { outline: none; box-shadow: var(--ring); }
+      /* Housekeeping, not a primary action: it clears the browser's own copies
+         and is reached for once a week, so it rests borderless at label weight
+         and only grows an edge on approach. */
+      .reload--quiet { border-color: transparent; background: none; color: var(--muted); }
+      .reload--quiet:hover { border-color: var(--line-strong); background: var(--bg-raised); color: var(--ink-2); }
+
+      /* ── Segmented switch (Всі / По сторінках) ────────────────────────────
+         Раніше це була одна кнопка-тумблер «За сторінками»: увімкнений режим
+         було видно, а от ЩО буде, якщо натиснути, — ні, і другого режиму на
+         екрані взагалі не існувало. Сегменти показують обидва стани одразу й
+         називають їх, тож перемикач читається без спроби. */
+      .seg {
+        display: inline-flex;
+        padding: 2px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-sm);
+        background: var(--bg-inset);
+      }
+      .seg__b {
+        padding: 3px 11px;
+        border: 0;
+        border-radius: calc(var(--r-sm) - 2px);
+        background: none;
+        color: var(--muted);
+        font: 500 12px/1.4 var(--font-ui);
+        cursor: pointer;
+        transition: color var(--dur-fast) var(--ease-out),
+                    background-color var(--dur-fast) var(--ease-out);
+      }
+      .seg__b:hover { color: var(--ink-2); }
+      .seg__b:focus-visible { outline: none; box-shadow: var(--ring); }
+      /* Вибраний сегмент — підняте тло на вдавленому ґрунті смуги: та сама
+         пара поверхонь, що й у решти сторінки, замість окремого акценту. */
+      .seg__b[aria-pressed='true'] {
+        background: var(--bg-raised);
+        color: var(--ink);
+        box-shadow: var(--shadow-card);
+      }
+      /* Theme toggle: shows the theme you would SWITCH TO, not the current
+         one — the icon is a door, not a mirror. Both SVGs ship in the button
+         and the active theme hides its own. */
+      .theme { display: inline-flex; align-items: center; padding: 5px 8px; }
+      .theme svg { display: block; }
+      :root[data-theme='dark'] .theme__moon { display: none; }
+      :root[data-theme='light'] .theme__sun { display: none; }
+
+      /* A dead source is not a footnote — the table silently loses a whole
+         group when a service is down, so the reason has to be on screen. */
+      .err {
+        margin-bottom: 12px;
+        padding: 9px 14px;
+        border: 1px solid var(--danger-line);
+        border-radius: var(--r-sm);
+        background: var(--danger-soft);
+        color: var(--danger);
+        font: 500 12px/1.5 var(--font-ui);
+      }
+
+      /* ── Table shell ──────────────────────────────────────────────────────
+         One raised panel on the dark ground; a 1px hairline does the work a
+         shadow cannot do here. No inner scroll box: the table grows to its
+         full height and the PAGE is the only thing that scrolls — a container
+         that scrolls inside a page that also scrolls gives two scrollbars and
+         a header that hides rows behind itself. Sticky anchors to the
+         viewport instead. */
+      .t-wrap {
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        background: var(--bg-raised);
+        /* In light the white panel needs a whisper of lift off the ground;
+           in dark the token is none — see its definition. */
+        box-shadow: var(--shadow-card);
+      }
+      table {
+        width: 100%;
+        /* Fixed layout is what makes the hierarchy hold: the seven supporting
+           columns take exactly the width they need, and Запит takes everything
+           left over — instead of the single longest cell in the log deciding
+           the shape of the whole table. */
+        table-layout: fixed;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        z-index: var(--z-sticky);
+        padding: 8px 10px;
+        /* Opaque on purpose: the header rides over scrolling rows. */
+        background: var(--bg-raised);
+        border-bottom: 1px solid var(--line-strong);
+        text-align: left;
+        white-space: nowrap;
+        cursor: pointer;
+        color: var(--muted);
+        font: 600 10.5px/1.4 var(--font-ui);
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        user-select: none;
+        transition: color var(--dur-fast) var(--ease-out);
+      }
+      /* The panel's top corners are rounded; the header must not clip them
+         with square opaque corners while at rest. */
+      th:first-child { border-top-left-radius: 7px; }
+      th:last-child { border-top-right-radius: 7px; }
+      /* Scrolled: the header is floating over rows, and a floating surface
+         casts. The .is-stuck class comes from a passive scroll listener —
+         CSS alone cannot know that sticky has engaged. */
+      .t-wrap.is-stuck th { box-shadow: var(--shadow-stuck); }
+      th:hover { color: var(--ink-2); }
+      /* The sorted column is simply the brightest header — on a monochrome
+         page, white IS the accent. */
+      th.is-sorted { color: var(--ink); }
+      th:focus-visible { outline: none; color: var(--ink); box-shadow: var(--ring); }
+      /* The indicator always holds its slot, so sorting a column never shoves
+         the header text sideways. */
+      .ind {
+        display: inline-block;
+        width: 10px;
+        margin-left: 4px;
+        font-family: var(--font-ui);
+        font-size: 10px;
+        letter-spacing: 0;
+      }
+
+      .col--num    { width: 58px; }
+      /* Ширина під найдовший підпис («In progress») плюс крапка: колонка
+         тепер несе слово, а не самий глиф. Забирає ~58px у «Запиту», який
+         віддає їх найдешевше — він і так живе на трьох рядках. */
+      .col--status { width: 98px; }
+      .col--time   { width: 78px; }
+      .col--dur    { width: 64px; text-align: right; }
+      .col--lane   { width: 68px; }
+      .col--did    { width: 56px; }
+      .col--redo   { width: 84px; }
+      /* req carries no width on purpose — see table-layout above. */
+
+      td {
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+        color: var(--ink-2);
+      }
+      /* First and last columns breathe against the panel edge — 10px against
+         a rounded border reads as touching. Headers follow, so the columns
+         stay plumb. */
+      td:first-child, th:first-child { padding-left: 14px; }
+      td:last-child, th:last-child { padding-right: 14px; }
+      tbody tr:last-child td { border-bottom: 0; }
+      tbody tr { cursor: pointer; }
+      /* Rows are keyboard targets too (tabindex in the template); the ring
+         draws INSET because an outset ring between hairline-separated rows
+         is swallowed by the neighbours. */
+      tbody tr:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px oklch(0.72 0.13 245 / 0.75); }
+      :root[data-theme='light'] tbody tr:focus-visible { box-shadow: inset 0 0 0 1.5px oklch(0.55 0.15 245 / 0.6); }
+      /* The row currently open in the drawer keeps a marker, so coming back
+         from the preview lands the eye where it left. Ephemeral by design:
+         cleared on close, and renders pause while the drawer is open. */
+      tbody tr.is-current td { background: var(--bg-hover); }
+      /* Hover, not zebra. The old light theme banded even rows because eight
+         columns were hard to track across a flat white field — but on this
+         ground the hairlines are visible enough to carry the rows, banding
+         would cost half the surface calm, and every row here is CLICKABLE:
+         the hover fill is not decoration, it is the affordance that says so,
+         and it tracks the row you are reading across all eight columns. */
+      tbody tr:hover td { background: var(--row-hover); }
+      /* The two states that are not at rest tint their whole row, so they are
+         findable without reading — and they win over the hover fill. */
+      tbody tr.is-wip td  { background: var(--info-soft); }
+      tbody tr.is-redo td { background: var(--danger-soft); }
+      /* Третій нерухомий тінт — рядок, що чекає на відповідь людини. Так само
+         помітний з відстані, як і два кольорові, але нейтральний: він єдиний
+         з них НЕ означає «щось відбувається». Ані сяйва, ані пульсу — тут
+         усе зупинилось, і рядок має виглядати саме так. */
+      tbody tr.is-ask td  { background: var(--held-soft); }
+
+      /* RUNNING rows breathe: a soft sheen sweeps the full ribbon while an
+         agent actually works — «В роботі», and the open rework iteration.
+         The gradient lives on the TR (one band across the row, not eight
+         restarts per cell) with the cells cleared to let it through; the
+         parent of a redo thread keeps its static tint — it is waiting, its
+         open iteration is the thing running. 3.2s and ~2× the resting tint
+         at peak: visible in the corner of the eye, not a strobe. */
+      tbody tr.is-wip,
+      tbody tr.sub.is-redo {
+        background-size: 200% 100%;
+        animation: row-sheen 3.2s linear infinite;
+      }
+      tbody tr.is-wip {
+        background-image: linear-gradient(100deg,
+          var(--info-soft) 38%, var(--info-sheen) 50%, var(--info-soft) 62%);
+      }
+      tbody tr.sub.is-redo {
+        background-image: linear-gradient(100deg,
+          var(--danger-soft) 38%, var(--danger-sheen) 50%, var(--danger-soft) 62%);
+      }
+      tbody tr.is-wip td,
+      tbody tr.sub.is-redo td { background: transparent; }
+      @keyframes row-sheen {
+        from { background-position: 160% 0 }
+        to   { background-position: -60% 0 }
+      }
+
+      td.empty {
+        padding: 48px 24px;
+        text-align: center;
+        color: var(--muted);
+        border: 0;
+        background: none;
+        cursor: default;
+      }
+      td.empty b { display: block; margin-bottom: 4px; color: var(--ink-2); font-weight: 600; }
+      td.empty span { font-size: 12px; }
+
+      /* ── Panels ───────────────────────────────────────────────────────────
+         THE table design of this page, in both modes: a slab with a title bar
+         on the inset ground, real air between slabs, and no thead of its own —
+         the shared column-header strip above owns sorting for all of them.
+         Ungrouped there is one such slab («Усі правки»); «За сторінками»
+         cuts the same rows into one slab per route. */
+      .groups { display: flex; flex-direction: column; gap: 18px; }
+      .ghead { margin-bottom: 18px; }
+      .pnl {
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        background: var(--bg-raised);
+        box-shadow: var(--shadow-card);
+        /* Row hover fill and tints must not poke past the radius. */
+        overflow: hidden;
+      }
+      .pnl__head {
+        display: flex;
+        align-items: center;
+        padding: 8px 14px;
+        background: var(--bg-inset);
+        border-bottom: 1px solid var(--line-strong);
+      }
+      .grp__route {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--r-xs);
+        background: none;
+        color: var(--ink-2);
+        font: 500 11px/1.5 var(--font-ui);
+        cursor: pointer;
+        transition: color var(--dur-fast) var(--ease-out);
+      }
+      .grp__route:hover { color: var(--ink); text-decoration: underline; }
+      .grp__route:focus-visible { outline: none; box-shadow: var(--ring); color: var(--ink); }
+      .grp__route svg { flex: none; color: var(--muted); }
+      /* «інше» is a bucket, not a screen: no glyph, no link, quieter ink. */
+      .grp__route--plain { color: var(--muted); cursor: default; }
+      .grp__route--plain:hover { color: var(--muted); text-decoration: none; }
+      .grp__n { margin-left: 8px; color: var(--muted); font: 400 11px/1.5 var(--font-ui); font-variant-numeric: tabular-nums; }
+
+      /* ── Index & supporting data ──────────────────────────────────────────
+         `#`, time and duration are machine values: muted, digits lined up
+         down the column on tabular figures, never competing with the request. */
+      td.idx, td.tab {
+        white-space: nowrap;
+        color: var(--muted);
+        font-family: var(--font-ui);
+        font-variant-numeric: tabular-nums;
+        /* 19px matches the request's first line (13px × 1.45), so the index
+           data and the prose sit on one optical baseline instead of the
+           smaller type drifting a pixel high. */
+        font-size: 11.5px;
+        line-height: 19px;
+      }
+      /* Durations right-align under their right-aligned header: magnitudes
+         compare by their ends, ids and clock times by their starts. */
+      td.tab--r { text-align: right; }
+      .muted { color: var(--muted); }
+
+      /* ── Status ───────────────────────────────────────────────────────────
+         Dot + word, no chip. Tinted pills would mean a coloured box per row
+         competing with the prose that carries the actual meaning; a dot with
+         a small word beside it says the same thing in a fraction of the ink.
+
+         The word is NOT optional decoration. The column shipped icon-only for
+         a while, with the label hidden in title/aria-label and the tally as
+         the legend — and the first person to read it took the green rows for
+         new work. A colour vocabulary the reader has to have memorised is not
+         a vocabulary; it is a quiz. So every row now names its own state, and
+         the colour is what makes the name findable, not what carries it.
+
+         The word stays 11px and takes the state's own hue; «Done» — nine rows
+         in ten — stays muted, so the archive still reads as furniture and the
+         column's ink is spent almost entirely on rows that want something. */
+      .st {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 19px; /* one optical baseline with .req and .tab */
+        white-space: nowrap;
+        color: var(--ink-2);
+      }
+      .st__w { font: 500 11px/1 var(--font-ui); letter-spacing: 0.005em; }
+      .st--new  { color: var(--pending); }
+      .st--wip  { color: var(--info); }
+      .st--redo { color: var(--danger); }
+      /* Повне чорнило — найсильніший текст у стовпчику. Решта станів носить
+         11px кольору; цей — 11px найтемнішого, що є. Він звертається до
+         читача особисто, тож і важить найбільше. */
+      .st--ask  { color: var(--ink); }
+      /* Архів — той самий приглушений тон, що й галочка перед ним. */
+      .st--done { color: var(--muted); }
+      .st .dot { width: 8px; height: 8px; }
+      .dot {
+        flex: 0 0 auto;
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--faint);
+      }
+      /* Icon system: Solar bold-duotone — the same iconify set the app
+         itself uses — inlined at build time from api.iconify.design, because
+         this page must never fetch at runtime. Solar's own grammar carries
+         the duotone (fill currentColor + an opacity-.5 secondary layer), so
+         the theme tokens recolour both layers for free. Status dots keep the
+         matching idea as core + soft halo of their hue; the two brand marks
+         in the Агент column are the official logos from simple-icons, not
+         UI icons — see LANE_IC. */
+      /* Нова — бурштин і НЕ пульсує: вона стоїть у черзі, з нею просто зараз
+         нічого не відбувається. Пульс лишається за станами, де щось справді
+         рухається (в роботі, доробка). */
+      .dot--new  { background: var(--pending); box-shadow: 0 0 0 3px var(--pending-soft); }
+      /* Крапки для «в роботі» тут немає навмисно: `stMark('wip')` завжди
+         віддає спінер (.spin нижче), бо «щось зараз крутиться» це обертання,
+         а не пульс. Правило `.dot--wip` було недосяжним — жоден рядок такого
+         класу не отримує. */
+      /* Пульс лишився за одним станом — доробкою: там нічого не біжить, але
+         рядок вимагає уваги. */
+      .dot--redo { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); animation: beat 1.6s ease-in-out infinite; }
+      /* Порожній обідок замість залитої крапки: у всіх інших станах знак
+         чимось наповнений — тоном, галочкою, спінером. Тут наповнити його
+         може лише відповідь людини, якої ще немає, і мітка каже це формою.
+         Без ореолу й без анімації — нерухомий контур серед кольорових крапок
+         читається на відстані як «інша порода», а не «ще один статус». */
+      .dot--ask {
+        background: none;
+        border: 1.5px solid var(--held-line);
+        box-shadow: none;
+      }
+      /* Зроблено is a CHECKBOX, not a dot: the resting state stays neutral
+         ink, but the glyph says "closed" instead of merely "present". Shared
+         by the status column and the tally legend via stMark(). */
+      .ok-ic { flex: none; color: var(--muted); }
+      @keyframes beat { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+
+      /* A spinner, not a pulse: «В роботі» means an agent is running right
+         now, and rotation is the one motion that reads as "still going"
+         rather than "look here". Один спінер на всю сторінку — і в колонці
+         стану, і в легенді підсумків (stMark), і на фавіконі. */
+      .elapsed { color: var(--info); font-family: var(--font-ui); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+      tr.is-redo .elapsed { color: var(--danger); }
+      .spin { flex: none; animation: spin 900ms linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg) } }
+
+      /* ── Agent lane ───────────────────────────────────────────────────────
+         The vocabulary is tiny and closed («сам», «agent», «opencode»,
+         «agent + impeccable»), so the cell shows MARKS, not words: the
+         official Claude and opencode logos (see LANE_IC for provenance) —
+         Claude's turns brand-orange when impeccable joined — and the Solar
+         user icon for hand-made fixes. The full name lives in title/aria-label.
+         opencode is cyan, impeccable orange; the rest stay quiet ink.
+         A name outside the vocabulary falls back to plain text — an icon
+         system must never eat an identity it does not recognise. */
+      .lane {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 19px; /* one optical baseline with .req and .tab */
+        white-space: nowrap;
+        color: var(--muted);
+        font: 400 11px/1.4 var(--font-ui);
+      }
+      .lane svg { display: block; }
+      .lane--opencode { color: var(--lane-op); }
+      /* impeccable has no logo of its own — the tell is Claude's mark in
+         Claude's brand orange; plain agent work keeps the mark in muted ink. */
+      .lane--imp { color: var(--lane-imp); }
+
+      /* ── The request ──────────────────────────────────────────────────────
+         The real decision on this page. Requests run from four words to ten
+         lines; left alone they make every row a different height and the table
+         stops being scannable at all.
+
+         So: three lines, hard. That is roughly the height of a short row
+         anyway, so the table gets one rhythm — and nothing is lost, because
+         the full text is the subject line of the Деталі dialog, the drawer's
+         own title, and the cell's tooltip. A log whose rows are all different
+         heights is not a table, it is a stack of paragraphs with rules between
+         them. */
+      .req {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        line-clamp: 3;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        color: var(--ink);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .req code {
+        padding: 1px 4px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-xs);
+        background: var(--bg-inset);
+        color: var(--ink);
+        font-family: var(--font-ui);
+        font-size: 0.88em;
+      }
+      .req strong { font-weight: 600; }
+
+      /* ── Питання агента, прямо в рядку ───────────────────────────────────
+         Раніше воно лежало тільки в дровері Details, і рядок «чекає на тебе»
+         не показував, ЧОГО саме він чекає — щоб сформулювати відповідь, треба
+         було відкрити ще одну поверхню. Тепер питання стоїть під запитом, за
+         тією самою гілкою, що й ітерації доробки (└, намальована — див.
+         .branch), приглушеним
+         чорнилом і на пів кроку менше: воно похідне від запиту, а не другий
+         запит. Рівно один рядок з обрізанням — рядок таблиці мусить лишитися
+         одного зросту; повний текст живе в title і в дровері. */
+      .ask-q {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        margin-top: 3px;
+        color: var(--muted);
+        font: 400 12px/1.45 var(--font-ui);
+      }
+      .ask-q__b {
+        flex: none;
+        /* .ask-q вирівнює дітей по базовій лінії, а в намальованої гілки
+           тексту немає — її базовою лінією став би нижній край коробки.
+           Тому цей один елемент вирівнюється по центру явно. */
+        align-self: center;
+        color: var(--faint);
+        font: 400 11px/1.45 var(--font-ui);
+      }
+      .ask-q__t {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* Код усередині питання не носить власної рамки: у прозі на 12px
+         приглушеного тону чіп — це другий наголос там, де наголосу немає. */
+      .ask-q code { font-family: var(--font-ui); font-size: 0.9em; }
+
+      /* ── Гілка треду ──────────────────────────────────────────────────────
+         `├` і `└` намальовані, а не набрані. Раніше вони приходили з
+         моноширинного шрифту; Inter псевдографіки не має, а системний фолбек
+         підставляє під неї випадкову гарнітуру — різна вага, ширина й висота
+         на кожній машині, і то саме там, де форма несе сенс: вкладеність
+         ітерації в рядок і похідність питання від запиту. Дві рамки на
+         псевдоелементах дають ту саму форму однаково скрізь.
+         Геометрія в em, тож гілка росте з кеглем СВОГО рядка — у #-колонці
+         11.5px, під питанням 11px, і кожна лишається пропорційною сусідньому
+         тексту. Колір — currentColor, тому обидва споживачі й далі фарбують
+         її своїм правилом (приглушене чорнило, червоне у відкритій ітерації),
+         і жодного нового кольору тут не заводиться.
+         Товщина 1px і навмисно НЕ в em: це волосяна лінія, така сама, як усі
+         рамки сторінки, і товщати від кегля вона не повинна. */
+      .branch {
+        position: relative;
+        display: inline-block;
+        width: 0.55em;
+        height: 1em;
+        /* Поперечка сидить на середині коробки, тож middle наводить її на
+           оптичну середину сусіднього тексту — у flex-контексті те саме
+           робить align-self нижче. */
+        vertical-align: middle;
+        user-select: none;
+      }
+      /* Кут: стовбур згори до середини плюс поперечка вправо — це і є `└`. */
+      .branch::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 50%;
+        border-left: 1px solid currentColor;
+        border-bottom: 1px solid currentColor;
+      }
+      /* Продовження стовбура нижче кута — уся різниця між `├` і `└`. Модифікатор
+         тут описує справжню відмінність (ітерація не остання), а не скасовує
+         те, що база робить неправильно. */
+      .branch--mid::after {
+        content: '';
+        position: absolute;
+        inset: 50% 0 0;
+        border-left: 1px solid currentColor;
+      }
+
+      /* ── Row controls ─────────────────────────────────────────────────────
+         Деталі and the send-back share one vocabulary: bare glyph buttons of
+         the same size, no border, no fill, resting one step above invisible.
+         They are inputs sitting in a data row, and the row is read far more
+         often than it is acted on. */
+      .icon-btn {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        /* A resting hairline box: the difference between "a glyph that
+           happens to sit here" and "a control you may press". Hover fills
+           the box, so approach reads as depression, not just recolour. */
+        border: 1px solid var(--line);
+        border-radius: var(--r-xs);
+        background: none;
+        cursor: pointer;
+        font-style: normal;
+        transition: color var(--dur-fast) var(--ease-out),
+                    border-color var(--dur-fast) var(--ease-out),
+                    background-color var(--dur-fast) var(--ease-out);
+      }
+      .icon-btn:hover { border-color: var(--line-strong); background: var(--bg-hover); }
+      /* One glyph size for every 20px button — the SVG strings carry their
+         own width/height, this overrides them all so Details, send-back,
+         resolve and delete weigh the same in a row. */
+      .icon-btn svg { width: 14px; height: 14px; }
+      .icon-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+
+      /* The id is what the user quotes back when a fix is wrong, so it must
+         be selectable and complete — truncated with the full value in the
+         tooltip, never abbreviated away. */
+      .id { font-family: var(--font-ui); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; font-variant-numeric: tabular-nums; }
+      .redo, .info, .dr__nav, .dr__x { display: inline-flex; align-items: center; justify-content: center; }
+      .info { color: var(--muted); }
+      .info:hover, .info:focus-visible { color: var(--ink); }
+      .info--redo { color: var(--danger); }
+
+      /* Send-back. Quiet by default — it is the exception, not the expected
+         action — and only turns danger-coloured on approach, or for good once
+         a rework is actually outstanding. */
+      .redo { color: var(--faint); }
+      .redo:hover, .redo:focus-visible { color: var(--danger); }
+      .redo--on { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+
+      /* The Доробки cell: the send-back glyph plus, once a thread exists, its
+         iteration count as a bare number, not a badge, like everything else
+         the machine counts on this page. */
+      .rw { display: inline-flex; align-items: center; gap: 6px; }
+      .rw-n { color: var(--muted); font: 500 11px/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+
+      /* Pre-work actions (resolve / delete on a note nobody has started).
+         Hidden until the row is hovered or the control focused: they are the
+         rarest inputs on the page and thirty rows of glyphs would be noise.
+         Keyboard users get them via :focus-within, no hover needed. */
+      .acts { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+      tbody tr:hover .acts, .acts:focus-within { opacity: 1; }
+      .act { color: var(--muted); }
+      .act:hover { color: var(--ink); }
+      .act--del:hover { color: var(--danger); }
+      /* Armed = one click from gone. Loud on purpose, and self-disarms. */
+      .act--del.is-armed { opacity: 1; color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+
+      /* ── Rework thread ────────────────────────────────────────────────────
+         Child rows hung under a sent-back fix, one per iteration. The branch
+         mark (├ └, drawn — see .branch) sits in the # column — quiet,
+         exactly where a tree
+         would draw its trunk — and the note occupies the request column: the
+         note IS the request of its iteration. Closed iterations rest on the
+         inset surface so the thread reads as carved into the log rather than
+         stacked on top of it; an open iteration keeps the danger tint and so
+         fuses visually with its tinted parent into one red block. */
+      tbody tr.sub td {
+        background: var(--bg-inset);
+        /* A notch denser than data rows: iterations are commentary on the
+           row above, and the tighter leading binds the thread to it. */
+        padding-top: 5px;
+        padding-bottom: 5px;
+      }
+      .sub__b { color: var(--faint); user-select: none; }
+      .sub__id { color: var(--muted); user-select: all; /* quotable, like .id */ }
+      tr.is-redo .sub__b { color: var(--danger); }
+      .sub .req { font-size: 12.5px; color: var(--ink-2); }
+      .st--fixed { color: var(--muted); font-weight: 400; }
+      /* Green only here: a closed rework is the one place "fixed" is news. */
+      .dot--fixed { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+
+      /* ── Drawer ───────────────────────────────────────────────────────────
+         Composed as three zones instead of seven loose siblings:
+           left   — walking the list (‹ › + position), one control group;
+           middle — what you are looking at (the request);
+           right  — what you can do about it (verdict, then open / close),
+                    fenced off by a hairline so actions never read as content.
+         The panel keeps the page's dark chrome, but its border-left is the
+         real edge — a drop shadow alone disappears against the dark scrim. */
+      .dr { position: fixed; inset: 0; z-index: var(--z-drawer); }
+      .dr__scrim {
+        position: absolute;
+        inset: 0;
+        background: var(--scrim);
+        animation: scrim-in var(--dur) var(--ease-out) both;
+      }
+      .dr__panel {
+        position: absolute;
+        top: 0; right: 0; bottom: 0;
+        width: 92%;
+        display: flex;
+        flex-direction: column;
+        border-left: 1px solid var(--line-strong);
+        background: var(--bg-raised);
+        box-shadow: var(--shadow-drawer);
+        animation: panel-in 280ms var(--ease-out) both;
+      }
+      @keyframes scrim-in { from { opacity: 0 } to { opacity: 1 } }
+      @keyframes panel-in {
+        from { opacity: 0; transform: translateX(24px) }
+        to   { opacity: 1; transform: translateX(0) }
+      }
+
+      .dr__head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .dr__group { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      .dr__navs { display: flex; gap: 2px; }
+      .dr__nav, .dr__x {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        background: none;
+        color: var(--muted);
+        cursor: pointer;
+        transition: color var(--dur-fast) var(--ease-out),
+                    background-color var(--dur-fast) var(--ease-out);
+      }
+      .dr__nav:hover:not([disabled]), .dr__x:hover { color: var(--ink); background: var(--bg-hover); }
+      .dr__nav:focus-visible, .dr__x:focus-visible { outline: none; box-shadow: var(--ring); }
+      .dr__nav[disabled] { opacity: .35; cursor: default; }
+      .dr__pos {
+        flex: 0 0 auto;
+        color: var(--muted);
+        font: 500 11px/1 var(--font-ui);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* The request is the one thing worth reading in this header, so it
+         takes the centre and the controls sit either side of it. */
+      .dr__title { flex: 1 1 auto; min-width: 0; display: flex; justify-content: center; text-align: center; }
+      .dr__name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ink);
+        font: 500 13px/1.4 var(--font-ui);
+      }
+
+      /* In the drawer the send-back is the task, not a control that happens
+         to sit in a table cell — so it is a size up and carries a plain
+         sentence-case label instead of a tracked-out all-caps one. */
+      .dr__rate { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      .dr__rate-label {
+        color: var(--muted);
+        font: 500 11px/1 var(--font-ui);
+      }
+      .dr__rate .redo { width: 24px; height: 24px; }
+
+      .dr__actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex: 0 0 auto;
+        padding-left: 14px;
+        border-left: 1px solid var(--line);
+      }
+      .dr__open {
+        white-space: nowrap;
+        color: var(--info);
+        font: 500 12px/1 var(--font-ui);
+        text-decoration: none;
+      }
+      .dr__open:hover, .dr__open:focus-visible { outline: none; text-decoration: underline; }
+      /* The frame hosts the LIGHT app: a white ground under it means loading
+         is a white flash into a white page, not a dark hole into a white one. */
+      .dr__frame { flex: 1 1 auto; width: 100%; border: 0; background: oklch(1 0 0); }
+
+      /* ── Dialog ───────────────────────────────────────────────────────────
+         Two modes, one box: reading what a fix did, and telling it to be done
+         again. A note here is not a comment on a finished thing — it is an
+         instruction — so it is a deliberate act behind a button rather than a
+         field sitting in every row. */
+      .pop {
+        position: fixed;
+        inset: 0;
+        z-index: var(--z-modal);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .pop__scrim {
+        position: absolute;
+        inset: 0;
+        background: var(--scrim);
+        animation: scrim-in var(--dur) var(--ease-out) both;
+      }
+      .pop__box {
+        position: relative;
+        width: min(560px, 100%);
+        padding: 20px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-lg);
+        background: var(--bg-raised);
+        box-shadow: var(--shadow-pop);
+        animation: pop-in var(--dur) var(--ease-out) both;
+      }
+      @keyframes pop-in {
+        from { opacity: 0; transform: scale(.97) }
+        to   { opacity: 1; transform: scale(1) }
+      }
+      .pop__title {
+        display: block;
+        margin: 0 0 4px;
+        color: var(--ink);
+        font: 600 15px/1.35 var(--font-ui);
+        letter-spacing: -0.01em;
+      }
+      /* The subject line doubles as the full request — the table clamps it to
+         three lines, this is where it is read whole. */
+      .pop__sub {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12.5px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      .pop__body {
+        margin: 0 0 14px;
+        max-height: 60vh;
+        overflow-y: auto;
+        color: var(--ink-2);
+        font-size: 13px;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+      }
+      .pop__body code {
+        padding: 1px 4px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-xs);
+        background: var(--bg-inset);
+        color: var(--ink);
+        font-family: var(--font-ui);
+        font-size: .88em;
+      }
+      /* One block per iteration in the Деталі dialog: the reviewer's note,
+         then (once closed) what the redo changed, split by a hairline. The
+         open iteration is the only tinted one — it is the thing still owed. */
+      .pop__it {
+        margin: 0 0 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        background: var(--bg-inset);
+        font-size: 12.5px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      .pop__it--open { border-color: var(--danger-line); background: var(--danger-soft); }
+      /* ── Element context in the Details dialog ────────────────────────────
+         Куди саме показали пальцем. Пари «підпис → значення» в дві колонки:
+         підпис вузький і приглушений, значення повне й не обрізане —
+         селектор, шлях і ланцюг компонентів це рівно ті рядки, які людина
+         копіює звідси в редактор, тож вони не обрізаються, а переносяться.
+         Це не картка: рамка одна, спільна з блоками треду нижче, бо це той
+         самий жанр — усе, що відомо про цю правку, одним стосом. */
+      .pop__el {
+        display: grid;
+        grid-template-columns: 74px minmax(0, 1fr);
+        gap: 5px 10px;
+        margin: 0 0 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        background: var(--bg-inset);
+      }
+      .pop__el dt { color: var(--muted); font: 500 10.5px/1.6 var(--font-ui); }
+      .pop__el dd {
+        margin: 0;
+        color: var(--ink-2);
+        font: 400 11.5px/1.6 var(--font-ui);
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      /* Текст самого елемента — це проза зі сторінки, а не машинне значення:
+         тож він набирається як проза — крупніше, повним чорнилом і без
+         табличних цифр, які тут не вирівнюють нічого. */
+      .pop__el dd.is-prose { font: 400 12.5px/1.5 var(--font-ui); color: var(--ink); }
+      .pop__it-head { margin-bottom: 4px; color: var(--muted); font: 500 10.5px/1.5 var(--font-ui); font-variant-numeric: tabular-nums; }
+      .pop__it--open .pop__it-head { color: var(--danger); }
+      .pop__it-res { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--ink-2); }
+
+      .pop__note {
+        display: block;
+        width: 100%;
+        padding: 9px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-sm);
+        background: var(--bg-inset);
+        color: var(--ink);
+        font: 400 13px/1.5 var(--font-ui);
+        resize: vertical;
+      }
+      .pop__note::placeholder { color: var(--muted); }
+      .pop__note:hover { border-color: var(--line-hover); }
+      .pop__note:focus { outline: none; box-shadow: var(--ring); border-color: transparent; }
+      .pop__foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+      .pop__err { flex: 1 1 auto; color: var(--danger); font: 500 12px/1.4 var(--font-ui); }
+      .pop__cancel, .pop__send {
+        flex: 0 0 auto;
+        padding: 6px 14px;
+        border-radius: var(--r-sm);
+        font: 500 12.5px/1.4 var(--font-ui);
+        cursor: pointer;
+        transition: color var(--dur-fast) var(--ease-out),
+                    border-color var(--dur-fast) var(--ease-out),
+                    background-color var(--dur-fast) var(--ease-out);
+      }
+      .pop__cancel { border: 1px solid var(--line-strong); background: none; color: var(--ink-2); }
+      .pop__cancel:hover { background: var(--bg-hover); color: var(--ink); }
+      /* The one filled button on the page — primary is ink-coloured; the
+         text borrows the panel surface so it flips with the theme for free. */
+      .pop__send { border: 1px solid transparent; background: var(--ink); color: var(--bg-raised); }
+      .pop__send:hover { background: var(--btn-primary-hover); }
+      .pop__cancel:focus-visible, .pop__send:focus-visible { outline: none; box-shadow: var(--ring); }
+      .pop__send[disabled] { opacity: .5; cursor: default; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .dot--redo, .spin { animation: none }
+        /* Sheen collapses to the plain resting tint. */
+        tbody tr.is-wip, tbody tr.sub.is-redo {
+          animation: none;
+          background-image: none;
+        }
+        tbody tr.is-wip td { background: var(--info-soft) }
+        tbody tr.sub.is-redo td { background: var(--danger-soft) }
+        .dr__panel, .dr__scrim, .pop__scrim, .pop__box { animation: none }
+        .icon-btn, .reload, .dr__nav, .dr__x, .pop__cancel, .pop__send, th { transition: none }
+      }
+
+      @media (max-width: 720px) {
+        body { padding: 14px 14px 24px; }
+        h1 { font-size: 15px; }
+        .dr__rate-label { display: none; }
+        /* Тут три слоти в рядок уже не тримаються, і замість того щоб душити
+           бокові блоки, смужка йде на власний рядок під ними — на всю ширину,
+           тобто знову рівно по центру сторінки. Порядок у DOM не змінюється
+           (знак, лічильники, дії), тож ні читання скрінрідером, ні обхід
+           табом не зачеплені: фокусованих елементів у смужці немає взагалі,
+           вони всі в .head__actions. */
+        .head { grid-template-columns: 1fr auto; }
+        .brand { grid-area: 1 / 1 / 2 / 2; }
+        .head__actions { grid-area: 1 / 2 / 2 / 3; }
+        .tally { grid-area: 2 / 1 / 3 / -1; }
+      }
+      /* Below ~640px the fixed columns would starve Запит — the page's whole
+         point. Трив. (4) and Агент (6) are the most expendable index data;
+         both remain one click away in Деталі. nth-child is safe here: group
+         headers and the empty state are single-cell colspan rows. */
+      @media (max-width: 640px) {
+        th:nth-child(4), td:nth-child(4),
+        th:nth-child(6), td:nth-child(6) { display: none; }
+        col.col--dur, col.col--lane { width: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="head">
+        <!-- Знак + назва — один вузол шапки, а не два окремі flex-елементи:
+             інакше проміжок між ними правив би gap самої .head (18px), і між
+             іконкою й словом зяяла б діра. Всередині .brand свій gap. -->
+        <div class="brand">
+          <!-- Скоба (shackle): дуга-бугель, палець упоперек, нотка всередині.
+               Назву несе слово поруч — «Comments» вимовляє воно, тож знаку
+               лишається друга половина імені, збруя: те, у що коментар
+               впряжено, щоб він тягнув правку. Бульбашка репліки тут була б
+               першим рефлексом і сказала б рівно те, що вже написано текстом.
+               Мова знака — та сама, що в іконок сторінки: 24-сітка,
+               currentColor, круглі кінці; ніякого власного кольору, тож він
+               живе в обох темах кольором заголовка.
+               Розмір і штрих ходять нарізно, і це головне, що тут легко
+               зламати. Коробка виросла 18 -> 22 -> 28px, але stroke-width
+               щоразу перераховувався під неї, щоб ЕКРАННИЙ штрих лишався
+               тим самим ~1.56px: 2.1x18 = 1.7x22 = 1.34x28 (усе в сітці 24,
+               екранний штрих = stroke-width x width / 24). Знак мав ставати
+               більшим, а не жирнішим — інакше він переважить усю шапку.
+               Тому тут 1.34, а не 2.4, як в іконок сторінки: у них коробка
+               13-14px, і та сама екранна товщина вимагає більшого числа.
+               Чорнило скоби займає 10.36 з 24 одиниць сітки, тобто на 28px
+               це ~12.1px проти cap-height заголовка ~11.6px — знак трохи
+               вищий за великі літери, як і просили.
+               Геометрія зсунута на 0.58 одиниці вгору проти вихідної: дуга
+               з поперечкою давали чорнило y 7.4..17.76, центр 12.58 замість
+               12, тож знак сидів нижче центру власної коробки, і на кожному
+               збільшенні цей перекіс ріс у пікселях. Тепер центр чорнила
+               збігається з центром viewBox, і align-items: center вирівнює
+               знак із рядком назви на БУДЬ-ЯКОМУ розмірі — без компенсацій
+               відступами, які довелося б підбирати наново після кожної
+               зміни кегля. -->
+          <svg class="brand__mark" viewBox="0 0 24 24" width="28" height="28"
+            fill="none" stroke="currentColor" stroke-width="1.34"
+            stroke-linecap="round" aria-hidden="true">
+            <path d="M7.4 6.82a6.2 6.2 0 1 0 9.2 0" />
+            <path d="M5.6 6.82h12.8" />
+            <circle cx="12" cy="11.02" r="1.9" fill="currentColor" stroke="none" />
+          </svg>
+          <h1>Comments Harness</h1>
+        </div>
+        <div class="tally" id="count"></div>
+        <div class="head__actions">
+          <button class="reload reload--quiet theme" id="theme" type="button"
+            aria-label="Toggle theme" title="Theme">
+            <svg class="theme__sun" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/><path d="M12 2V3"/><path d="M12 21V22"/><path d="M22 12L21 12"/><path d="M3 12L2 12"/><path d="M19.0708 4.92969L18.678 5.32252"/><path d="M5.32178 18.6777L4.92894 19.0706"/><path d="M19.0708 19.0703L18.678 18.6775"/><path d="M5.32178 5.32227L4.92894 4.92943"/></g></svg>
+            <svg class="theme__moon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 11.5373 21.3065 11.4608 21.0672 11.8568C19.9289 13.7406 17.8615 15 15.5 15C11.9101 15 9 12.0899 9 8.5C9 6.13845 10.2594 4.07105 12.1432 2.93276C12.5392 2.69347 12.4627 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"/></g></svg>
+          </button>
+          <div class="seg" role="group" aria-label="Grouping">
+            <button class="seg__b" id="segAll" type="button" aria-pressed="true"
+              title="Bands by recency">All</button>
+            <button class="seg__b" id="segPages" type="button" aria-pressed="false"
+              title="Panel per route">By page</button>
+          </div>
+        </div>
+      </div>
+      <div id="warn"></div>
+      <div id="note"></div>
+      <!-- ONE table design, in both modes. The page used to carry two: a flat
+           table whose thead sat inside its own shell, and a separate strip of
+           route panels — same columns, same rows, two different slabs, and
+           the eye had to re-learn the grid every time the toggle flipped.
+           Now the sticky column header is always this strip, and the rows
+           always live in .pnl panels under it: «За сторінками» merely decides
+           whether that is ONE panel («Усі правки») or one per route. Every
+           table here is table-layout:fixed with the same col-- widths, so the
+           columns line up across panels by construction. -->
+      <div class="t-wrap ghead" id="gheadWrap">
+        <table>
+          <thead>
+            <tr id="gthead"></tr>
+          </thead>
+        </table>
+      </div>
+      <div class="groups" id="groups"></div>
+    </div>
+
+    <!-- Row click opens the annotated screen itself, in a drawer over the log.
+         An iframe rather than a new tab: the point is to glance at the screen
+         and come straight back to the row you were rating. -->
+    <div class="dr" id="dr" hidden>
+      <div class="dr__scrim" id="drScrim"></div>
+      <aside class="dr__panel" role="dialog" aria-modal="true" aria-labelledby="drTitle">
+        <header class="dr__head">
+          <div class="dr__group">
+            <div class="dr__navs">
+              <button class="dr__nav" id="drPrev" type="button" aria-label="Previous fix" title="Previous (←)"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5L9 12L15 19"/></g></svg></button>
+              <button class="dr__nav" id="drNext" type="button" aria-label="Next fix" title="Next (→)"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5L15 12L9 19"/></g></svg></button>
+            </div>
+            <span class="dr__pos" id="drPos"></span>
+          </div>
+          <span class="dr__title" id="drTitle">
+            <b class="dr__name" id="drName"></b>
+          </span>
+          <div class="dr__rate" id="drRate" role="group" aria-label="Send back" hidden>
+            <span class="dr__rate-label">Rework</span>
+            <button type="button" class="icon-btn redo" id="drRedo"
+              title="Send back" aria-label="Send back"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z"/></g></svg></button>
+          </div>
+          <div class="dr__actions">
+            <a class="dr__open" id="drOpen" target="_blank" rel="noopener">Open ↗</a>
+            <button class="dr__x" id="drClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M14.5 9.50002L9.5 14.5M9.49998 9.5L14.5 14.5"/></g></svg></button>
+          </div>
+        </header>
+        <iframe class="dr__frame" id="drFrame" title="Fix screen"></iframe>
+      </aside>
+    </div>
+
+    <!-- One dialog, two modes: reading what a fix did, and sending it back. -->
+    <div class="pop" id="pop" hidden>
+      <div class="pop__scrim" id="popScrim"></div>
+      <div class="pop__box" role="dialog" aria-modal="true" aria-labelledby="popTitle">
+        <h2 class="pop__title" id="popTitle">Send back</h2>
+        <p class="pop__sub" id="popSub"></p>
+        <div class="pop__body" id="popBody" hidden></div>
+        <textarea class="pop__note" id="popNote" rows="4" maxlength="500"
+          aria-label="What is wrong and how it should be"
+          placeholder="What is wrong and how it should be"></textarea>
+        <div class="pop__foot">
+          <span class="pop__err" id="popErr"></span>
+          <button class="pop__cancel" id="popCancel" type="button">Cancel</button>
+          <button class="pop__send" id="popSend" type="button">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      /* ────────────────────────────────────────────────────────────────────
+         Zero libraries on purpose. The page is served by the local dev server
+         and is regularly opened from a LAN machine that may have no internet
+         at all, so a CDN import would be a page that sometimes just fails.
+         The markdown it has to read is a known, narrow subset (h2/h3, tables,
+         `code`, **bold**) — forty lines of parser beats a dependency.
+
+         Hosts are derived from location.hostname, never hardcoded: this page
+         is normally opened as http://192.168.1.42:5273/fixlog.html from
+         ANOTHER machine, where "localhost" would mean that machine's own
+         loopback and every fetch would fail.
+         ──────────────────────────────────────────────────────────────────── */
+      const ANN = `http://${location.hostname}:4747`   // annotations (open work)
+      const RATE = `http://${location.hostname}:4748`  // ratings (verdicts)
+
+      const $ = (id) => document.getElementById(id)
+
+      /* A blank page is the worst failure mode for a dashboard: it looks like
+         "no data" when it is really "the script died". Anything uncaught lands
+         in the warning strip instead. */
+      /* Тримається в змінній, а не тільки в DOM: `load()` перезбирає #warn
+         цілком щоцикла, тож напис, покладений просто в innerHTML, жив рівно
+         до наступного опитування (десять секунд) і зникав — а помилка при
+         цьому нікуди не поділась. Тепер це стан, який смужка проблем
+         підхоплює нарівні з недоступним сервером і живе, доки живе сторінка:
+         сама себе сторінка не полагодить. */
+      let fatalMsg = ''
+      const fatal = (msg) => {
+        fatalMsg = `Page error: ${String(msg)}`
+        const el = document.getElementById('warn')
+        if (el) el.innerHTML = `<div class="err">${esc(fatalMsg)}</div>`
+      }
+      window.addEventListener('error', (e) => fatal(e.message))
+      window.addEventListener('unhandledrejection', (e) => fatal(e.reason && e.reason.message || e.reason))
+
+      const esc = (s) =>
+        String(s).replace(/[&<>"]/g, (c) =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+
+      const inline = (s) =>
+        esc(s)
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+
+      /* Markdown decoration stripped, for values used as data (route text,
+         lane vocabulary, rating keys) rather than rendered prose. */
+      const plain = (s) => String(s).replace(/[`*]/g, '').trim()
+
+      /* Lane marks. The two brands are the OFFICIAL logos, inlined verbatim
+         from simple-icons (simple-icons/claude — Anthropic's Claude starburst;
+         simple-icons/opencode — their blocky «o»), original 24-unit viewBox
+         and paths untouched, monochrome by origin so currentColor recolours
+         them per theme. impeccable ships no logo (checked its skill package),
+         so it is never given a fake one: «agent + impeccable» is Claude's
+         mark wearing Claude's brand orange (--lane-imp). «сам» is a person,
+         not a brand — the Solar user icon like the rest of the UI set. */
+      const LANE_IC = {
+        claude: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="m4.714 15.956l4.718-2.648l.079-.23l-.08-.128h-.23l-.79-.048l-2.695-.073l-2.337-.097l-2.265-.122l-.57-.121l-.535-.704l.055-.353l.48-.321l.685.06l1.518.104l2.277.157l1.651.098l2.447.255h.389l.054-.158l-.133-.097l-.103-.098l-2.356-1.596l-2.55-1.688l-1.336-.972l-.722-.491L2 6.223l-.158-1.008l.656-.722l.88.06l.224.061l.893.686l1.906 1.476l2.49 1.833l.364.304l.146-.104l.018-.072l-.164-.274l-1.354-2.446l-1.445-2.49l-.644-1.032l-.17-.619a3 3 0 0 1-.103-.729L6.287.133L6.7 0l.995.134l.42.364l.619 1.415L9.735 4.14l1.555 3.03l.455.898l.243.832l.09.255h.159V9.01l.127-1.706l.237-2.095l.23-2.695l.08-.76l.376-.91l.747-.492l.583.28l.48.685l-.067.444l-.286 1.851l-.558 2.903l-.365 1.942h.213l.243-.242l.983-1.306l1.652-2.064l.728-.82l.85-.904l.547-.431h1.032l.759 1.129l-.34 1.166l-1.063 1.347l-.88 1.142l-1.263 1.7l-.79 1.36l.074.11l.188-.02l2.853-.606l1.542-.28l1.84-.315l.832.388l.09.395l-.327.807l-1.967.486l-2.307.462l-3.436.813l-.043.03l.049.061l1.548.146l.662.036h1.62l3.018.225l.79.522l.473.638l-.08.485l-1.213.62l-1.64-.389l-3.825-.91l-1.31-.329h-.183v.11l1.093 1.068l2.003 1.81l2.508 2.33l.127.578l-.321.455l-.34-.049l-2.204-1.657l-.85-.747l-1.925-1.62h-.127v.17l.443.649l2.343 3.521l.122 1.08l-.17.353l-.607.213l-.668-.122l-1.372-1.924l-1.415-2.168l-1.141-1.943l-.14.08l-.674 7.254l-.316.37l-.728.28l-.607-.461l-.322-.747l.322-1.476l.388-1.924l.316-1.53l.285-1.9l.17-.632l-.012-.042l-.14.018l-1.432 1.967l-2.18 2.945l-1.724 1.845l-.413.164l-.716-.37l.066-.662l.401-.589l2.386-3.036l1.439-1.882l.929-1.086l-.006-.158h-.055L4.138 18.56l-1.13.146l-.485-.456l.06-.746l.231-.243l1.907-1.312Z"/></svg>',
+        opencode: '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M22 24H2V0h20zM17 4.8H7v14.4h10z"/></svg>',
+        self: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="6" r="4"/><path d="M20 17.5C20 19.9853 20 22 12 22C4 22 4 19.9853 4 17.5C4 15.0147 7.58172 13 12 13C16.4183 13 20 15.0147 20 17.5Z"/></g></svg>',
+      }
+
+      const lane = (raw) => {
+        const t = plain(raw)
+        if (!t) return '<span class="muted">—</span>'
+        const icons = []
+        if (/opencode/i.test(t)) icons.push(LANE_IC.opencode)
+        else if (/сам/i.test(t)) icons.push(LANE_IC.self)
+        /* Назва моделі — це не інформація в цьому стовпчику: колонка каже,
+           ХТО робив правку, а всі вони Claude. «opus», «sonnet», «haiku»,
+           «fable» друкувалися словом лише тому, що словника їм не завели —
+           і одна модель виглядала інакше за іншу без жодної причини.
+           Тепер будь-яка з них — той самий знак; точна назва лишається в
+           title, бо в лозі вона записана і за нею шукають. */
+        else if (/agent|claude|impeccable|opus|sonnet|haiku|fable|anthropic/i.test(t))
+          icons.push(LANE_IC.claude)
+        /* Outside the vocabulary → the name itself, readable, never an
+           unexplained blank. */
+        if (!icons.length) return `<span class="lane" title="${esc(t)}">${esc(t)}</span>`
+        const kind = /opencode/i.test(t) ? 'opencode' : /impeccable/i.test(t) ? 'imp' : 'agent'
+        return `<span class="lane lane--${kind}" role="img" title="${esc(t)}" aria-label="${esc(t)}">${icons.join('')}</span>`
+      }
+
+      /* «3хв тому» замість «15:32». Абсолютний час у цій таблиці ніколи не
+         був питанням — питання завжди «наскільки це свіже»; годинник змушував
+         рахувати різницю в голові. Точний час лишається в title комірки, бо
+         саме ним рядок цитують у fixlog.md. Оновлюється тим же 1-секундним
+         тикером, що й лічильник роботи: «щойно», яке лишається «щойно» через
+         пів години, — брехня. */
+      const ago = (ms) => {
+        const sec = Math.round((Date.now() - ms) / 1000)
+        if (!ms || Number.isNaN(sec)) return ''
+        if (sec < 60) return 'now'         // від'ємне теж: годинник машини стрибнув
+        const m = Math.floor(sec / 60)
+        if (m < 60) return `${m}m`
+        const h = Math.floor(m / 60)
+        if (h < 24) return `${h}h`
+        return `${Math.floor(h / 24)}d`
+      }
+
+      const hhmm = (ms) => {
+        const d = new Date(ms)
+        return Number.isNaN(d.getTime())
+          ? ''
+          : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+      }
+
+      /* Annotations carry the full URL they were made on; only the path is
+         worth showing, and a malformed one must not take the page down. */
+      const routeOf = (url) => {
+        try { return new URL(url).pathname } catch { return String(url || '—') }
+      }
+
+      /* ── Sources ──────────────────────────────────────────────────────── */
+
+      const getJSON = async (url) => {
+        const r = await fetch(url, { cache: 'no-store' })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        return r.json()
+      }
+
+      /* Open work comes from the notes server (comments-harness/server/notes-server.mjs),
+         whose contract is comments-harness/docs/contract.md.
+
+         The old Agentation server is gone, and with it its whole shape: there
+         are no sessions to walk, no per-session fan-out, and exactly three
+         statuses — `pending`, `working` and `resolved`. So one request
+         replaces three plus a request pool.
+
+         Береться ВЕСЬ список, а не `?status=pending`. Нота живе на сервері до
+         `DELETE`, який робить сторож після вдалої правки, — тож усі три
+         статуси це відкрита робота, яку користувач мусить бачити. Питати
+         лише pending означало гасити рядок у мить, коли агент його взяв.
+         `resolved` тут — короткий хвіст між «правку зроблено» і «сторож
+         закрив ноту»; у таблиці він малюється як `working`. */
+      async function loadOpen() {
+        const all = await getJSON(`${ANN}/notes`)
+        const list = Array.isArray(all) ? all : []
+        return {
+          pending: list.filter((n) => n.status === 'pending'),
+          working: list.filter((n) => n.status === 'working'),
+          resolved: list.filter((n) => n.status === 'resolved'),
+        }
+      }
+
+      /* ── Rating identity ───────────────────────────────────────────────
+         The key is the fix's own `id` — the `ID` column of the index, which is
+         the name of its folder in `data/fixes/<id>/`. It is permanent, so a
+         verdict stays attached to the fix no matter how the row is re-parsed,
+         re-sorted or regenerated. A live annotation is keyed the same way (its
+         note id IS the fix id), so a fix can be rated the moment it is closed,
+         without waiting for the index to be rebuilt.
+
+         The index is generated (`server/build-index.mjs`), so the column is
+         always there. If it ever is not, the key comes out empty and the
+         ratings server answers 400 — a visible failure, never a verdict
+         quietly landing on the wrong fix. */
+
+      /* «Зроблено» — parsed out of fixlog.md. Columns are found by header name
+         rather than position, so an extra column added later does not silently
+         shift the route into the request. */
+      function parseDone(md) {
+        const lines = md.split('\n')
+        const isRow = (l) => l.trim().startsWith('|')
+        /* Значення в комірці МОЖЕ містити пайп: генератор індексу
+           (`server/build-index.mjs`) екранує його як `\|`, бо інакше він
+           розрізав би рядок таблиці. Наївний `split('|')` цього не знав і
+           різав рядок посеред значення — усі колонки після місця екранування
+           з'їжджали на одну. 13 із 287 архівних рядків через це показували
+           чужий текст в «Агент»/«Деталі» і сміття замість `ID`, а Send back
+           на такому рядку летів на :4748 з невалідним ключем і діставав 400.
+           Тому ріжемо посимвольно: роздільник — лише НЕекранований `|`, а зі
+           значення екранування знімається. */
+        const cells = (l) => {
+          let s = l.trim()
+          if (s.startsWith('|')) s = s.slice(1)
+          /* Кінцевий пайп — лише справжній: `\|` наприкінці це частина
+             значення, і зрізати його означало б лишити висячий слеш. */
+          if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1)
+          const out = []
+          let cur = ''
+          for (let i = 0; i < s.length; i++) {
+            if (s[i] === '\\' && s[i + 1] === '|') { cur += '|'; i++; continue }
+            if (s[i] === '|') { out.push(cur.trim()); cur = ''; continue }
+            cur += s[i]
+          }
+          out.push(cur.trim())
+          return out
+        }
+
+        const out = []
+        /* «те саме» in the route column means "the same screen as the row
+           above" — log shorthand. Resolved here (carried forward), so the
+           drawer and the route grouping get a real path. */
+        let prevRoute = ''
+        /* Рядок лога несе тільки «15:32» — доба живе в заголовку секції
+           «## 2026-08-12» вище. Без неї «3хв тому» рахувалося б від сьогодні
+           для рядків усіх днів, і вчорашній лог виглядав би щойно зробленим. */
+        let day = ''
+        /* Розкладка колонок ЖИВЕ ДОВШЕ за суцільний блок рядків. Раніше
+           парсер вимагав «шапка + роздільник» безпосередньо перед рядками і
+           зупиняв таблицю на першому ж порожньому рядку — а порожній рядок
+           з'являється щоразу, коли агент дописує свій рядок через `>>` після
+           файлу без завершального \n. Півсотні найсвіжіших правок через це
+           не доїжджали на сторінку взагалі: у лозі є, у таблиці немає. Тепер
+           таблиця триває, доки не почалася нова шапка. */
+        let map = null
+        for (let i = 0; i < lines.length; i++) {
+          const h = lines[i].match(/^##\s+(\d{4})-(\d{2})-(\d{2})/)
+          if (h) { day = h.slice(1).map(Number); map = null; continue }
+          if (!isRow(lines[i])) continue
+          /* Шапка: рядок таблиці, під яким роздільник. */
+          if (isRow(lines[i + 1] || '') && /^[\s|:-]+$/.test(lines[i + 1])) {
+            const head = cells(lines[i]).map((c) => plain(c).toLowerCase())
+            const col = (re) => head.findIndex((c) => re.test(c))
+            map = {
+              time: col(/^час$|^time$/),
+              dur: col(/трив|роботи|duration|elapsed/),
+              route: col(/роут|route|шлях/),
+              req: col(/запит|request/),
+              /* Колонка двічі міняла назву: спершу «Маршрут» (куди віддали
+                 правку), потім «Агент» (хто її зробив). Обидві живі в цьому
+                 файлі — лог append-only, старі секції не переписуються. Шукати
+                 лише одну назву означає лишити половину рядків без виконавця,
+                 і саме так воно й було: секції з «Агент» малювали прочерк. */
+              lane: col(/маршрут|агент|agent|lane/),
+              did: col(/зроблено|результат|did/),
+              /* Ім'я теки правки — воно ж ключ оцінки. */
+              id: col(/^id$/),
+            }
+            i++            // проковтнути роздільник
+            continue
+          }
+          if (!map) continue
+          const c = cells(lines[i])
+          const pick = (k) => (map[k] >= 0 ? c[map[k]] || '' : '')
+          const time = pick('time')
+          const route = pick('route')
+          const routePlain = plain(route)
+          const resolved =
+            /^те саме/i.test(routePlain) && prevRoute ? prevRoute : routePlain
+          if (resolved.startsWith('/')) prevRoute = resolved
+          const hm = plain(time).match(/(\d{1,2}):(\d{2})/)
+          out.push({
+            key: plain(pick('id')),
+            time,
+            /* 0, якщо час або доба нечитабельні (у лозі бувають «10:0x»
+               і «10:2x» — навмисна неточність ранніх рядків). Тоді комірка
+               показує текст як він написаний. */
+            at: day && hm
+              ? new Date(day[0], day[1] - 1, day[2], +hm[1], +hm[2]).getTime()
+              : 0,
+            route,
+            routeRes: resolved,
+            dur: pick('dur'),
+            req: pick('req'),
+            laneRaw: pick('lane'),
+            did: pick('did'),
+          })
+        }
+        return out
+      }
+
+      /* ── Render ───────────────────────────────────────────────────────── */
+
+      /* One panel by default, not three grouped lists: the user scans across
+         statuses ("what is still open, what did opencode do") far more often
+         than within one. Sorting is therefore the grouping tool — click a
+         header instead of being locked into someone else's sections. «За
+         сторінками» only re-cuts the same panel per route; the design is the
+         same slab either way. */
+      const state = { ratings: {}, ratingsErr: '', rows: [], sort: 'fresh', dir: 1 }
+
+      /* The drawer walks the list the user is actually looking at — the
+         current sort order, not insertion order — so ‹ › match what the table
+         shows above it. Refreshed on every render so a re-sort while the
+         drawer is open does not desync the arrows. */
+      let visible = []
+      let cursor = -1
+
+
+      /* Inline SVG, not text glyphs. A character like ★ or ⟳ is sized and
+         aligned by the font — it shifts baseline, differs across systems and
+         cannot take a stroke width. These are drawn, so they sit on the same
+         optical grid everywhere. currentColor keeps every existing colour
+         rule working unchanged. */
+      const SVG = {
+        /* Pause/play пішли разом із паузою: контракт нот знає pending,
+           working і resolved, і жоден із переходів не є «призупинити».
+           `redo` — одна дія одного жанру: send-back правки через :4748.
+           Живу ноту цією кнопкою в чергу не повертають — `rwCell` віддає її
+           лише рядкам, які вже не `new`/`ask`, і летить вона на /rework. */
+        check: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>',
+        del: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5001 6H3.5"/><path d="M18.8332 8.5L18.3732 15.3991C18.1962 18.054 18.1077 19.3815 17.2427 20.1907C16.3777 21 15.0473 21 12.3865 21H11.6132C8.95235 21 7.62195 21 6.75694 20.1907C5.89194 19.3815 5.80344 18.054 5.62644 15.3991L5.1665 8.5"/><path d="M9.5 11L10 16"/><path d="M14.5 11L14 16"/><path d="M6.5 6C6.55588 6 6.58382 6 6.60915 5.99936C7.43259 5.97849 8.15902 5.45491 8.43922 4.68032C8.44784 4.65649 8.45667 4.62999 8.47434 4.57697L8.57143 4.28571C8.65431 4.03708 8.69575 3.91276 8.75071 3.8072C8.97001 3.38607 9.37574 3.09364 9.84461 3.01877C9.96213 3 10.0932 3 10.3553 3H13.6447C13.9068 3 14.0379 3 14.1554 3.01877C14.6243 3.09364 15.03 3.38607 15.2493 3.8072C15.3043 3.91276 15.3457 4.03708 15.4286 4.28571L15.5257 4.57697C15.5433 4.62992 15.5522 4.65651 15.5608 4.68032C15.841 5.45491 16.5674 5.97849 17.3909 5.99936C17.4162 6 17.4441 6 17.5 6"/></g></svg>',
+        redo: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z"/></g></svg>',
+        info: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 17V11"/><path d="M12 8H12.0001"/></g></svg>',
+      }
+
+      /* Порядок сортування по статусу = порядок, у якому рядок вимагає уваги:
+         відправлене на доробку, потім те, що зараз біжить, потім нове в
+         черзі, і аж наприкінці архів із fixlog.md.
+
+         Стану «зроблено, чекає на перевірку» тут більше немає, і це не
+         скорочення списку, а зміна конвеєра: закриття ноти перестало бути
+         людським кроком. Сторож сам дописує рядок у fixlog.md і закриває
+         ноту після вдалої правки, а користувач перевіряє результат на самому
+         екрані, а не в цій таблиці. Тобто `resolved` тепер живе секунди — і
+         власної мови (зелений тінт, підпис «Done · check it», кнопки Send
+         back / Delete) не заслуговує: у ці секунди конвеєр ще працює з
+         нотою, тож малюється вона як `wip`. Зроблена робота приходить у
+         таблицю рівно в одному вигляді — сірою галочкою рядка з лога.
+
+         Найвище — не доробка, а `ask`: нота, під якою агент лишив питання і
+         зупинився. Решта станів чекає МАШИНУ (доробку хтось візьме, робота
+         біжить, нове стоїть у черзі й дочекається сторожа), і тільки цей
+         чекає ЛЮДИНУ. Поки вона не відповість, по цьому рядку конвеєр стоїть
+         намертво — і саме тому він перший. */
+      const RANK = { ask: 0, redo: 1, wip: 2, new: 3, done: 4 }
+
+      /* Rework history of a row. The server's source of truth is the
+         `reworks` array; records written before the history existed carry a
+         single `rework` slot — read both, so an old fixlog-ratings.json needs
+         no migration to render. */
+      const rwOfKey = (key) => {
+        const rec = state.ratings[key]
+        if (!rec) return []
+        return Array.isArray(rec.reworks) ? rec.reworks : rec.rework ? [rec.rework] : []
+      }
+      const rwOf = (r) => rwOfKey(r.key)
+      /* Only the LAST iteration can be open — the server amends an open one
+         instead of stacking a second. */
+      const openRw = (r) => {
+        const l = rwOf(r)
+        const last = l[l.length - 1]
+        return last && !last.done ? last : null
+      }
+
+      /* Питання, яким агент зупинив роботу: останнє слово в треді ноти за
+         агентом, тобто відповідати мусить людина. Саме за цією ознакою
+         сторож таку ноту НЕ бере в роботу («чекають людину» в його лозі), і
+         таблиця мусить говорити тією самою мовою — інакше рядок, що чекає на
+         відповідь, виглядає як звичайна нова нота, до якої просто ще не
+         дійшли руки. Повертається саме повідомлення, бо рядок його ще й
+         показує. */
+      const askOf = (r) => {
+        const t = Array.isArray(r.thread) ? r.thread : []
+        const last = t[t.length - 1]
+        return last && last.role === 'agent' ? last : null
+      }
+
+      /* Effective status, computed — never stored. A finished fix that was
+         sent back is not "done" any more, and that has to be true for sorting
+         as well as for the dot, so both read it from here rather than from a
+         field somebody has to remember to update.
+
+         `ask` рахується лише для `new`: у роботі щось справді біжить, і
+         жовтий прапорець «стоїмо» був би там неправдою навіть за наявності
+         питання в треді. */
+      const stOf = (r) =>
+        openRw(r) ? 'redo' : r.status === 'new' && askOf(r) ? 'ask' : r.status
+
+      /* Час, який ця конкретна комірка мусить рахувати. Один рядок правила,
+         бо семантика колонки одна на всі стани: «скільки минуло відтоді, як
+         рядок став тим, чим він зараз є».
+
+         Для нової ноти це мить, коли її створили: вік у черзі — і є питання
+         («скільки вона лежить, поки її ніхто не взяв»). Для ноти в роботі це
+         мить, коли її ВЗЯЛИ. Колонка показувала «2d» на правці, яку сторож
+         запустив хвилину тому, і це читалось як «два дні ніхто не чіпав» —
+         рівно навпаки до правди. Тепер там «1m», а час створення лишається
+         в title комірки, бо саме він відповідає на друге питання: «а взагалі
+         відколи вона висить». Для архівного рядка джерело одне — час у лозі.
+
+         Ця ж функція годує смуги давності й сортування за часом, інакше
+         рядок показував би «1m» під заголовком «Yesterday». */
+      const atOf = (r) =>
+        (r.status === 'wip' && (r.startedAt || 0)) || r.at || 0
+
+      /* Роут, за яким МОЖНА навігувати, витягнутий зі значення, яке майже
+         ніколи не є чистим шляхом. Колонка «Роут» у fixlog.md — рукописна
+         проза: агент пише туди і сам шлях, і елемент, по якому клацнули
+         («`/search` (`Search` → `.sr-featured__tag`, «Sponsored»)»), а іноді
+         взагалі не шлях («усі сторінки налаштувань», «глобально (іконки)»).
+         Виграє перший /path-подібний токен; значення без шляху дає порожній
+         рядок — такий рядок нікуди не веде і в дровері не відкривається.
+
+         Одна функція на два виклики навмисно: панель групується САМЕ за тим
+         екраном, який відкриє рядок усередині неї. Поки дровер брав сире
+         `routePath`, а заголовок панелі — очищений, вони розходилися: клік по
+         назві панелі показував потрібний макет, а клік по рядку віддавав
+         iframe'у рядок на кшталт «/search (Search → …)», який SPA не знає, і
+         `path="*"` малював лендинг. 173 з 255 рядків лога так і відкривалися. */
+      const navRoute = (routePath) => {
+        const m = String(routePath || '').match(/\/[\w\-./:%]*/)
+        return m ? m[0].replace(/[.,;:)]+$/, '') : ''
+      }
+      /* Те саме значення в ролі ключа групи: заголовок панелі — це ім'я
+         екрана, а «інше» збирає все, що екраном не є. */
+      const groupKey = navRoute
+
+      /* ХВ:СС — one shape for every duration in the column: the live clock
+         of a running fix, the duration of a finished one, and the «3.9хв»
+         text an agent typed into fixlog.md all render identically. Mixed
+         shapes («45с», «2хв 10с», «1год 5хв») made the column unscannable —
+         magnitudes have to line up as digits to be comparable at a glance.
+         Хвилини НЕ загортаються на 60: прогін, що висить 83:20, має виглядати
+         неправильно, а не вдавати годину з чимось. Секунди лишаються, бо
+         дрібні правки живуть менше за хвилину, і 00:00 на всіх них не
+         розрізняло б швидке від миттєвого. */
+      const fmtMS = (sec) => {
+        const s = Math.max(0, Math.floor(sec))
+        return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+      }
+      const fmtDur = (ms) => fmtMS(ms / 1000)
+
+      /* Durations in fixlog.md are prose, written by hand by whichever agent
+         closed the fix: «45с», «3.9хв», «2хв 10с», «1год 5хв», «<1хв». Parsed
+         to seconds so the column can show them in the same ГГ:ХХ shape — and
+         so sorting compares durations instead of strings, where «9хв» would
+         land after «40с». Unparseable text returns null and is shown as it
+         was written: better an odd cell than a confident 00:00 lie. */
+      const durSecs = (text) => {
+        const t = plain(text || '').toLowerCase().replace(',', '.')
+        if (!t) return null
+        /* «<1хв» — це «менше за», а не «одна»: спершу знак, потім числа. */
+        if (t.startsWith('<')) return 0
+        const grab = (unit) => {
+          const m = t.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${unit})`))
+          return m ? parseFloat(m[1]) : 0
+        }
+        const h = grab('год|г|h'), m = grab('хв|м|m'), sec = grab('с|s')
+        if (!h && !m && !sec) return null
+        return h * 3600 + m * 60 + sec
+      }
+
+      /* Прочитане — у ГГ:ХХ, непрочитане — як написано, порожнє — риска. */
+      const durCell = (text) => {
+        if (!plain(text || '').trim()) return '<span class="muted">—</span>'
+        const sec = durSecs(text)
+        return sec === null ? esc(plain(text)) : fmtMS(sec)
+      }
+
+      /* Column widths live in CSS (.col--*), because the table is
+         table-layout:fixed and one place for the numbers is what stops the
+         header and the body from disagreeing. */
+      /* `t` is what the header shows. Статус used to show NOTHING — a lone
+         dot per row with the tally as its legend — and that is exactly what
+         made the table unreadable: an unlabelled colour column is a legend the
+         reader has to hold in their head. It is now a named column like the
+         rest. */
+      /* Перша колонка — «#», а не «ID»: у ній стоїть ПОРЯДКОВИЙ номер правки
+         (`r.num`) — коротка ручка, якою правку називають уголос («правка 14»)
+         і яку малює пін у дровері. Справжній ключ (`r.key`, ім'я теки
+         `data/fixes/<id>/`) у таблиці не показується взагалі: він задовгий
+         для комірки й не потрібен оку — його видно в діалозі Details. Поки
+         заголовок казав «ID», колонка обіцяла ключ і показувала лічильник. */
+      const COLS = [
+        { k: 'num',    t: '#' },
+        { k: 'status', t: 'Status' },
+        { k: 'time',   t: 'Time' },
+        { k: 'dur',    t: 'Dur' },
+        { k: 'req',    t: 'Request' },
+        { k: 'lane',   t: 'Agent' },
+        { k: 'did',    t: 'Details' },
+        { k: 'redo',   t: 'Reworks' },
+      ]
+
+      /* «Needs you» — єдиний підпис у стовпчику, що звертається до читача, а
+         не описує стан справи збоку. Це навмисне: усі інші стани — новини
+         про конвеєр, а цей — прохання до того, хто дивиться. Влазить у ті
+         самі 98px, що й «In progress». */
+      const STATUS_LABEL = { ask: 'Needs you', redo: 'Sent back', new: 'New', wip: 'In progress', done: 'Done' }
+
+      /* THE column grid, in one place. Widths live in the .col--* CSS rules;
+         this colgroup pins them to every table on the page — the shared
+         header strip AND each panel under it. Panels have no thead, and
+         table-layout:fixed reads its grid from the first ROW when no cols
+         exist — which handed every panel its own improvised grid that could
+         never line up with the header above it. */
+      const COLGROUP = `<colgroup>${COLS.map((c) => `<col class="col--${c.k}">`).join('')}</colgroup>`
+      document.querySelectorAll('#gheadWrap table').forEach((t) =>
+        t.insertAdjacentHTML('afterbegin', COLGROUP))
+
+      /* Один спінер на сторінку. Розмір 11px тримає його в межах рядка
+         таблиці (.st має min-height: 19px), тобто мітка стає при слові, а не
+         роздуває рядок. */
+      const SPIN_SVG =
+        '<svg class="spin" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><circle opacity=".25" cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9"/></svg>'
+
+      /* The state mark, used by the status column AND the tally so the
+         legend can never drift from the rows it explains. done → a checkbox;
+         wip → the spinner, because it is the one state where something is
+         running THIS second; everything else keeps its dot. */
+      const stMark = (k) =>
+        k === 'done'
+          ? '<svg class="ok-ic" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>'
+          : k === 'wip'
+            ? SPIN_SVG
+            : `<i class="dot dot--${k}"></i>`
+
+      /* The Доробки cell: send-back control plus the thread length. Open
+         work has nothing to send back yet, so it shows a dash like every
+         other not-applicable cell. */
+      function rwCell(r) {
+        const st = stOf(r)
+        /* Only work NOBODY has started can be managed: a new note can be
+           marked resolved by hand or deleted. Once an agent holds it (wip /
+           redo) there is nothing safe to offer — you cannot un-run a running
+           fix. Delete arms on the first click and fires on the second:
+           cheaper than a modal, still not one twitch.
+
+           Resolve does NOT simply drop the row: `PATCH {"status":"resolved"}`
+           makes the note an orphan in `resolved`, and the watchdog's orphan
+           sweep (`watchdog/dispatcher.mjs`) closes it like any finished fix —
+           a `data/fixes/<id>/` folder and a row in the index, whose «зроблено»
+           reads «Виконавець не лишив опису правки». That is the intended use
+           (the fix was made outside the conveyor and should be recorded), so
+           the action stays — but the tooltip now says it instead of promising
+           a silent disappearance. Nothing to record → Delete. */
+        /* `ask` — та сама нота в черзі, просто із запитанням над нею: агент
+           її не тримає, тож ті самі дві дії лишаються доступні. */
+        if (st === 'new' || st === 'ask') {
+          const id = esc(r.key)
+          return `<span class="rw acts">
+              <button type="button" class="icon-btn act" data-resolve="${id}" aria-label="Resolve" title="Resolve — logged as a fix with no description">${SVG.check}</button>
+              <button type="button" class="icon-btn act act--del" data-del="${id}" aria-label="Delete" title="Delete (second click confirms)">${SVG.del}</button>
+            </span>`
+        }
+        if (st === 'wip') return '<span class="muted">—</span>'
+        const list = rwOf(r)
+        const open = openRw(r)
+        return `<span class="rw">
+            <button type="button" class="icon-btn redo${open ? ' redo--on' : ''}" data-redo="${esc(r.key)}"
+              aria-label="Send back"
+              title="${open ? 'Sent back: ' + esc(open.note) : 'Send back'}">${SVG.redo}</button>
+            ${list.length ? `<span class="rw-n">×${list.length}</span>` : ''}
+          </span>`
+      }
+
+      /* The header lives twice — over the flat table and as the shared
+         strip over the panels — built from one string so they can never
+         drift, and skipped entirely when nothing changed: the auto-refresh
+         must not rebuild focusable elements under the keyboard every 10s. */
+      let headSig = ''
+      function renderHead() {
+        const html = COLS.map((c) => {
+          const on = state.sort === c.k
+          const arrow = on ? (state.dir > 0 ? '↑' : '↓') : ''
+          return `<th data-sort="${c.k}" tabindex="0"
+            class="col--${c.k}${on ? ' is-sorted' : ''}"
+            aria-sort="${on ? (state.dir > 0 ? 'ascending' : 'descending') : 'none'}"
+            title="Sort">${c.t}<span class="ind">${arrow}</span></th>`
+        }).join('')
+        if (html === headSig) return
+        headSig = html
+        $('gthead').innerHTML = html
+      }
+
+      /* ── Incremental DOM ──────────────────────────────────────────────────
+         The 10s refresh used to rebuild tbody.innerHTML wholesale — every
+         cycle blinked, dropped hover, scroll anchoring and the armed state
+         of buttons. Now the table is reconciled, not repainted:
+
+           * every logical block (a fix with its thread, a group header, a
+             gap, the empty state) is a UNIT with a stable key;
+           * a unit's cells are compared against the TEMPLATE strings of the
+             previous render — never against live DOM, which tick() mutates
+             (elapsed counters would otherwise look "changed" every cycle
+             and flicker back to empty);
+           * only genuinely changed cells are swapped, only misplaced rows
+             are moved (insertBefore of the EXISTING node — reorder, not
+             recreation), only vanished units are removed.
+
+         Sorting, grouping and theme still go through the same path: for
+         them the reconciler degenerates into a pure reorder, which is
+         exactly the cheapest correct thing. */
+      const dom = new Map() // unit key → { trHtml: [..], cells: [[..]], nodes: [tr..] }
+
+      const parseTr = (html) => {
+        /* <template> parses table parts at top level — a bare div would
+           silently drop the <tr>. */
+        const tpl = document.createElement('template')
+        tpl.innerHTML = html
+        return tpl.content.firstElementChild
+      }
+
+      const syncAttrs = (oldEl, newEl) => {
+        for (const a of [...oldEl.attributes])
+          if (!newEl.hasAttribute(a.name)) oldEl.removeAttribute(a.name)
+        for (const a of [...newEl.attributes])
+          if (oldEl.getAttribute(a.name) !== a.value) oldEl.setAttribute(a.name, a.value)
+      }
+
+      /* Returns the unit's live nodes, updated in place where possible. */
+      function syncUnit(key, trHtmlList) {
+        const prev = dom.get(key)
+        if (!prev) {
+          const nodes = trHtmlList.map(parseTr)
+          dom.set(key, {
+            trHtml: trHtmlList.slice(),
+            cells: nodes.map((tr) => [...tr.children].map((td) => td.outerHTML)),
+            nodes,
+          })
+          return dom.get(key).nodes
+        }
+        const nodes = []
+        const cells = []
+        for (let i = 0; i < trHtmlList.length; i++) {
+          if (prev.trHtml[i] === trHtmlList[i] && prev.nodes[i]) {
+            /* Template unchanged — the live node stays exactly as it is,
+               runtime state (focus, armed delete, ticking clock) included. */
+            nodes.push(prev.nodes[i])
+            cells.push(prev.cells[i])
+            continue
+          }
+          const fresh = parseTr(trHtmlList[i])
+          const freshCells = [...fresh.children].map((td) => td.outerHTML)
+          const old = prev.nodes[i]
+          if (!old || old.children.length !== fresh.children.length) {
+            /* A thread grew, or the unit changed shape — here the whole tr
+               is the update granule. */
+            if (old) old.replaceWith(fresh)
+            nodes.push(fresh)
+            cells.push(freshCells)
+            continue
+          }
+          /* Same shape: touch only the cells whose TEMPLATE changed. */
+          syncAttrs(old, fresh)
+          for (let j = 0; j < freshCells.length; j++) {
+            if (prev.cells[i][j] !== freshCells[j]) {
+              old.children[j].replaceWith(fresh.children[j].cloneNode(true))
+            }
+          }
+          nodes.push(old)
+          cells.push(freshCells)
+        }
+        /* A thread that shrank: drop the tail rows. */
+        for (let i = trHtmlList.length; i < prev.nodes.length; i++) prev.nodes[i].remove()
+        prev.trHtml = trHtmlList.slice()
+        prev.cells = cells
+        prev.nodes = nodes
+        return nodes
+      }
+
+      /* Places every unit's nodes in order INSIDE the given tbody, moving
+         only what is misplaced. In panel mode this runs once per panel, and
+         a fix whose route changed groups simply gets its existing rows
+         reparented by the same insertBefore. The removal sweep is global and
+         happens once per render, in renderBody — a unit "missing" from one
+         panel may just live in another. */
+      let renderSeen = null
+      function commit(units, tbody) {
+        let anchor = null
+        for (const u of units) {
+          renderSeen.add(u.key)
+          for (const n of syncUnit(u.key, u.trs)) {
+            const ref = anchor ? anchor.nextSibling : tbody.firstChild
+            if (n !== ref) tbody.insertBefore(n, ref)
+            anchor = n
+          }
+        }
+      }
+      function sweepDom() {
+        for (const [key, rec] of dom) {
+          if (!renderSeen.has(key)) {
+            rec.nodes.forEach((n) => n.remove())
+            dom.delete(key)
+          }
+        }
+      }
+
+      /* Live panels in «За сторінками» mode: group key → its DOM. Panels are
+         reconciled like rows — created once, retitled and reordered in
+         place, removed when their route empties out. */
+      const panels = new Map()
+
+      function renderBody() {
+        const k = state.sort
+        const rows = state.rows.slice().sort((a, b) => {
+          let av, bv
+          /* Default order: newest first, across every status. Live annotations
+             carry a real timestamp; done rows only have the log's HH:MM, so
+             their order comes from position in the append-only log — later
+             line means later fix. */
+          if (k === 'fresh') return (b.fresh || 0) - (a.fresh || 0)
+          if (k === 'status') { av = RANK[stOf(a)]; bv = RANK[stOf(b)] }
+          else if (k === 'num') { av = a.num || 1e9; bv = b.num || 1e9 }
+          /* Той самий парсер, що й малює комірку, — інакше стовпчик
+             сортувався б не так, як читається. */
+          else if (k === 'dur') { av = durSecs(a.dur) ?? -1; bv = durSecs(b.dur) ?? -1 }
+          else if (k === 'time') { av = atOf(a); bv = atOf(b) }
+          else if (k === 'redo') { av = rwOf(a).length; bv = rwOf(b).length }
+          /* Ключ колонки ≠ ім'я поля рядка: колонка зветься `lane`, а
+             значення лежить у `laneRaw` (сире, як у лозі, — рендер його
+             розбирає сам). Без цієї підміни гілка читала `a['lane']`,
+             тобто undefined для КОЖНОГО рядка, і клік по «Agent» просто
+             нічого не сортував. */
+          else {
+            const f = k === 'lane' ? 'laneRaw' : k
+            av = plain(a[f] || '').toLowerCase(); bv = plain(b[f] || '').toLowerCase()
+          }
+          if (av < bv) return -1 * state.dir
+          if (av > bv) return 1 * state.dir
+          /* Stable tiebreak so equal keys never reshuffle between renders. */
+          return (b.ts || 0) - (a.ts || 0)
+        })
+
+        /* Glyph AND word. The glyph is what the eye finds; the word is what
+           makes the find mean something without a hover, a legend or a
+           memorised palette. Вибір гліфа цілком у stMark — тут його більше
+           не дублюємо, інакше колонка й легенда розійшлися б. */
+        const stIcon = (st) =>
+          `<span class="st st--${st}">${stMark(st)}<span class="st__w">${STATUS_LABEL[st]}</span></span>`
+        const rowHtml = (r, i) => {
+              const st = stOf(r)
+              const cls = st === 'wip' ? 'is-wip' : st === 'redo' ? 'is-redo' : st === 'ask' ? 'is-ask' : ''
+              /* Питання показуємо в рядку, а не ховаємо в дровер: щоб
+                 відповісти, треба його прочитати, а відкривати заради цього
+                 ще одну поверхню — рівно та ціна, через яку рядок і «висів». */
+              const q = st === 'ask' ? askOf(r) : null
+              /* data-i is the row's index in `visible`, carried on the tr
+                 because thread rows sit between parents and positional
+                 indexOf would drift. Thread rows borrow the parent's index:
+                 clicking anywhere in the thread opens the parent's screen. */
+              const parent = `<tr class="${cls}" data-route="${esc(navRoute(r.routePath))}" data-i="${i}" tabindex="0"
+              data-x="${r.x ?? ''}" data-y="${r.y ?? ''}" data-num="${r.num ?? ''}">
+              <td class="idx">${r.num || ''}</td>
+              <td>${stIcon(st)}</td>
+              <td class="tab">${
+                atOf(r)
+                  ? `<span class="ago" data-at="${atOf(r)}" title="${esc(
+                      /* На рядку в роботі число каже «взяли стільки-то тому»,
+                         тож підказка мусить назвати обидві точки — інакше
+                         зміна семантики була б непомітною підміною. */
+                      st === 'wip' && r.startedAt
+                        ? `Picked up ${hhmm(r.startedAt)} · created ${hhmm(r.at)}`
+                        : plain(r.time),
+                    )}"></span>`
+                  : esc(plain(r.time))
+              }</td>
+              <td class="tab tab--r">${
+                st === 'wip'
+                  /* Годинник роботи біжить від моменту, коли її ВЗЯЛИ, а не
+                     коли анотацію намалювали. Тулбар перезаливає свої локальні
+                     копії зі СТАРИМ timestamp — рахунок від нього показував
+                     «04:12» на правці, яку щойно почали. */
+                  ? `<span class="elapsed" data-since="${r.startedAt || r.ts || 0}"></span>`
+                  : durCell(r.dur)
+              }</td>
+              <td><div class="req" title="${esc(plain(r.req || ''))}">${inline(r.req || '—')}</div>${
+                q
+                  ? `<div class="ask-q" title="${esc(plain(q.content || ''))}"><span class="ask-q__b branch" aria-hidden="true"></span><span class="ask-q__t">${
+                      inline(q.content || '')
+                    }</span></div>`
+                  : ''
+              }</td>
+              <td>${lane(r.laneRaw)}</td>
+              <td>${
+                /* Живі ноти не мають `did` — зате мають те, чого немає в
+                   архівних рядків: сам елемент, на який показали пальцем
+                   (роут, селектор, ланцюг компонентів, текст) і розмову з
+                   агентом. Кнопка тут раніше з'являлась лише за непорожнім
+                   тредом, тобто в переважної більшості живих нот колонка
+                   стояла прочерком, хоча показати було що. Тепер подробиці
+                   доступні завжди, коли є хоч один із трьох носіїв. */
+                r.did || st === 'redo' || r.el || (r.thread && r.thread.length)
+                  ? `<button type="button" class="icon-btn info${
+                      st === 'redo' ? ' info--redo' : ''
+                    }" data-info="${esc(r.key)}" aria-label="Details" title="Details">${SVG.info}</button>`
+                  : '<span class="muted">—</span>'
+              }</td>
+              <td>${rwCell(r)}</td>
+            </tr>`
+              /* The rework thread: one child row per iteration, branch glyph
+                 in the # column, the reviewer's note in the request column —
+                 the note IS the request of its iteration. An open iteration
+                 shows a live clock; a closed one, how long the round took. */
+              const thread = rwOf(r).map((rw, j, l) => {
+                const openIt = !rw.done
+                const at = Date.parse(rw.at) || 0
+                const label = openIt ? 'Sent back' : 'Fixed'
+                return `<tr class="sub${openIt ? ' is-redo' : ''}" data-route="${esc(navRoute(r.routePath))}" data-i="${i}">
+                <td class="tab"><span class="sub__b branch${
+                  j === l.length - 1 ? '' : ' branch--mid'
+                }" aria-hidden="true"></span> <span class="sub__id">${
+                  /* Suffix id: iteration 2 of fix 74 is «74.2» — the handle a
+                     human quotes back about a round, exactly like num for the
+                     fix itself. Before load() has numbered the rows the base
+                     is briefly a bare dot («.2»); the next render fills it. */
+                  (r.num ? r.num + '.' : '.') + (j + 1)
+                }</span></td>
+                <td><span class="st ${openIt ? 'st--redo' : 'st--fixed'}"><i class="dot ${openIt ? 'dot--redo' : 'dot--fixed'}"></i><span class="st__w">${label}</span></span></td>
+                <td class="tab">${at ? hhmm(at) : ''}</td>
+                <td class="tab tab--r">${
+                  openIt
+                    ? `<span class="elapsed" data-since="${at}"></span>`
+                    : (rw.doneAt ? fmtDur((Date.parse(rw.doneAt) || at) - at) : '<span class="muted">—</span>')
+                }</td>
+                <td><div class="req" title="${esc(plain(rw.note || ''))}">${inline(rw.note || '—')}</div></td>
+                <td><span class="muted">—</span></td>
+                <td><span class="muted">—</span></td>
+                <td><span class="muted">—</span></td>
+              </tr>`
+              })
+              return [parent, ...thread]
+        }
+
+        /* A row unit is the parent tr plus its thread trs — the thread
+           belongs to the fix, so it moves and dies with it. */
+        visible = []
+        renderSeen = new Set()
+        const rowUnit = (r) => {
+          const i = visible.push(r) - 1
+          return { key: 'row:' + r.key, trs: rowHtml(r, i) }
+        }
+        /* Both modes render the SAME panel; they differ only in how the rows
+           are cut into panels — «Всі» cuts by recency band, «По сторінках» by
+           route. An empty log is that same panel with the empty state inside,
+           whatever the toggle says. Keeping one code path is the point: two
+           paths were what let the two views drift apart. */
+        const usePanels = grouped && rows.length > 0
+        if (!rows.length) {
+          syncPanels([[ALL_KEY, [{ key: 'empty', trs: [`<tr><td colspan="${COLS.length}" class="empty">
+                <b>Nothing yet</b>
+                <span>Notes from the overlay and rows from fixlog.md show up here.</span>
+              </td></tr>`] }], 'All fixes']])
+        } else if (!usePanels) {
+          /* Звичайний перегляд теж згрупований — за давністю. Плаский список
+             із двохсот рядків не має жодного орієнтира: «сьогоднішнє» від
+             «тижневого» відділяє лише зміна цифр у стовпчику часу. Смуги
+             дають той самий орієнтир, що й роути в іншому режимі, і по тій
+             самій осі, за якою список і так відсортований за замовчуванням.
+
+             Ряд свідомо грубий і нерівномірний: свіже цікавить із точністю до
+             півгодини, вчорашнє — з точністю до дня. Рядки лога без читабельного
+             часу («10:2x» у ранніх записах) осідають у хвіст окремою смугою,
+             а не вдають, ніби вони з 1970 року. */
+          const buckets = new Map()
+          for (const r of rows) {
+            const k = ageBucket(atOf(r))
+            if (!buckets.has(k)) buckets.set(k, [])
+            buckets.get(k).push(r)
+          }
+          const ordered = [...buckets.entries()].sort((a, b) => a[0] - b[0])
+          syncPanels(ordered.map(([k, members]) =>
+            [AGE_KEY + k, members.map(rowUnit), AGE_LABEL[k]]))
+        } else {
+          /* Group by normalised route. Rows arrive already sorted by the
+             active sort, and grouping only PARTITIONS that order — inside a
+             group the sort stays whatever the header says. Groups themselves
+             are ordered by their freshest member: the screen someone touched
+             last is the screen the reviewer came to check. */
+          const groups = new Map()
+          for (const r of rows) {
+            const k = groupKey(r.routePath) || OTHER_KEY
+            if (!groups.has(k)) groups.set(k, [])
+            groups.get(k).push(r)
+          }
+          const freshest = (members) => Math.max(...members.map((r) => r.fresh || 0))
+          const ordered = [...groups.entries()]
+            .sort((a, b) => freshest(b[1]) - freshest(a[1]))
+          syncPanels(ordered.map(([k, members]) => [k, members.map(rowUnit)]))
+        }
+
+        sweepDom()
+      }
+
+      /* The route in a panel header is a LINK into the same iframe preview
+         the rows use — the panel names a screen, so clicking the name shows
+         the screen. «інше» has no screen to show, and the single ungrouped
+         panel names no screen at all; both stay plain spans. */
+      const PAGE_IC = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.0296 2C6.23851 2 4.34296 2 3.17139 3.17157C1.99981 4.34315 2 6.22876 2 10V14C2 17.7712 2 19.6569 3.17157 20.8284"/><path d="M3.17139 20.8281C4.34296 21.9997 6.22858 21.9997 9.99981 21.9997L14 22C17.7712 22 19.6569 21.9997 20.8284 20.8281C22 19.6566 22 17.7712 22 14V13.5625"/><path d="M19.3516 7.61621C20.6558 8.78998 21.3078 9.3774 21.6538 10.1543C21.9998 10.9312 21.9998 11.8085 21.9998 13.5631"/><path d="M10.0298 2C11.5548 2 12.3173 2.00011 13.0093 2.26562C13.7012 2.53114 14.2651 3.03857 15.3929 4.05365L19.3516 7.61621"/><path d="M13 2.5V5C13 7.35702 13 8.53553 13.7322 9.26777C14.4645 10 15.643 10 18 10H21.5"/></g></svg>'
+      /* Keys namespaced with \u0000 so no real route can ever collide
+         with them — a route starting with a NUL byte does not exist. */
+      const ALL_KEY = '\u0000all'
+      const AGE_KEY = '\u0000age:'
+
+      /* Сходинки давності. Індекс — і ключ панелі, і порядок згори вниз. */
+      const AGE_LABEL = [
+        'Just now',       // < 15 хв
+        'Half an hour',   // < 45 хв
+        'An hour',        // < 90 хв
+        'A few hours',    // < 6 год
+        'Earlier today',  // < 24 год
+        'Yesterday',
+        'This week',
+        'Older',
+        'No time',        // рядки лога, з яких час не читається
+      ]
+      const ageBucket = (at) => {
+        if (!at) return 8
+        const m = (Date.now() - at) / 60000
+        if (m < 15) return 0
+        if (m < 45) return 1
+        if (m < 90) return 2
+        if (m < 360) return 3
+        if (m < 1440) return 4
+        if (m < 2880) return 5
+        if (m < 10080) return 6
+        return 7
+      }
+      const OTHER_KEY = '\u0000other'
+
+      function panelHead(key, n, label) {
+        const name = label
+          ? `<span class="grp__route grp__route--plain">${esc(label)}</span>`
+          : key === OTHER_KEY
+            ? '<span class="grp__route grp__route--plain">other</span>'
+            : `<button type="button" class="grp__route" data-open-route="${esc(key)}"
+                title="Preview ${esc(key)}">${PAGE_IC}${esc(key)}</button>`
+        /* The empty state is a panel with nothing in it — a «×0» beside the
+           words «поки що порожньо» would be counting the void. */
+        return name + (n ? `<span class="grp__n">×${n}</span>` : '')
+      }
+
+      /* One PANEL per entry: own shell, title bar, tbody. Reconciled like
+         everything else — created once, retitled only when the count or name
+         changes, reordered with insertBefore, its rows committed into its own
+         tbody. Panels without an entry this render are removed, and that is
+         what makes the mode toggle free: «Усі правки» and the per-route
+         panels are the same function fed a different set of keys. */
+      function syncPanels(entries) {
+        const gWrap = $('groups')
+        const seenPanels = new Set()
+        let anchor = null
+        for (const [k, units, label] of entries) {
+          seenPanels.add(k)
+          let pnl = panels.get(k)
+          if (!pnl) {
+            const el = document.createElement('section')
+            el.className = 'pnl'
+            el.innerHTML = `<header class="pnl__head"></header><table>${COLGROUP}<tbody></tbody></table>`
+            pnl = { el, head: el.firstElementChild, tbody: el.querySelector('tbody'), headHtml: '' }
+            panels.set(k, pnl)
+          }
+          const rowCount = units.length && units[0].key !== 'empty' ? units.length : 0
+          const headHtml = panelHead(k, rowCount, label)
+          if (pnl.headHtml !== headHtml) {
+            pnl.head.innerHTML = headHtml
+            pnl.headHtml = headHtml
+          }
+          const ref = anchor ? anchor.nextSibling : gWrap.firstChild
+          if (pnl.el !== ref) gWrap.insertBefore(pnl.el, ref)
+          anchor = pnl.el
+          commit(units, pnl.tbody)
+        }
+        for (const [k, pnl] of panels) {
+          if (!seenPanels.has(k)) { pnl.el.remove(); panels.delete(k) }
+        }
+      }
+
+      const render = () => { renderHead(); renderBody(); tick() }
+
+      /* Live elapsed time for anything still running. Driven by its own 1s
+         ticker rather than by the 10s data refresh — a counter that only moves
+         when the table reloads looks frozen. Reads the annotation's own
+         timestamp, so it survives a re-render without restarting. */
+      function tick() {
+        const now = Date.now()
+        document.querySelectorAll('.elapsed').forEach((el) => {
+          const since = Number(el.dataset.since) || 0
+          if (!since) { el.textContent = '—'; return }
+          el.textContent = fmtDur(now - since)
+        })
+        document.querySelectorAll('.ago').forEach((el) => {
+          el.textContent = ago(Number(el.dataset.at) || 0)
+        })
+      }
+      setInterval(tick, 1000)
+
+      /* Header click sorts; clicking the active column flips direction. */
+      function sortBy(k) {
+        state.dir = state.sort === k ? -state.dir : 1
+        state.sort = k
+        render()
+      }
+      document.addEventListener('click', (e) => {
+        const th = e.target.closest('th[data-sort]')
+        if (!th) return
+        sortBy(th.dataset.sort)
+      })
+      /* Headers and rows are focusable, so both answer the keyboard too. */
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        if (!e.target.closest) return
+        const th = e.target.closest('th[data-sort]')
+        if (th) { e.preventDefault(); sortBy(th.dataset.sort); return }
+        const tr = e.target.closest('tr[data-i]')
+        if (tr && e.target === tr) { e.preventDefault(); openAt(Number(tr.dataset.i)) }
+      })
+
+      /* ── Drawer ───────────────────────────────────────────────────────── */
+      const dr = $('dr')
+
+      function openAt(i) {
+        if (i < 0 || i >= visible.length) return
+        /* Рядок без справжнього роуту («усі сторінки налаштувань») показувати
+           нема чого. Виходимо ДО зсуву курсора: інакше ‹ › і лічильник «12/255»
+           переїхали б на рядок, якого в дровері так і не видно. */
+        const route = navRoute(visible[i].routePath)
+        if (!route) return
+        cursor = i
+        /* Mark the row (and its thread — they share data-i) being previewed,
+           so ‹ › in the drawer visibly walks the table behind it. Renders
+           pause while the drawer is open, so the class survives. */
+        document.querySelectorAll('tr.is-current').forEach((el) => el.classList.remove('is-current'))
+        document.querySelectorAll(`tr[data-i="${i}"]`).forEach((el) => el.classList.add('is-current'))
+        const r = visible[i]
+        openDrawer(
+          route,
+          r.x != null && r.y != null ? { x: r.x, y: r.y, num: r.num } : null,
+          r.status === 'done' ? r.key : '',
+          r,
+        )
+      }
+      function openDrawer(route, pin, key, row) {
+        if (!route || route === '—') return
+        /* The name is the request itself — what was asked for is what
+           identifies a fix to a human; the route is supporting detail. */
+        $('drName').textContent = row ? plain(row.req || '—') : route
+        $('drPos').textContent = cursor >= 0 ? `${cursor + 1}/${visible.length}` : ''
+        $('drPrev').disabled = cursor <= 0
+        $('drNext').disabled = cursor < 0 || cursor >= visible.length - 1
+        /* Rating lives in the drawer too: the honest moment to judge a fix is
+           while looking at the screen it changed, not while scanning a table.
+           Only done rows have a verdict to give — open ones have nothing to
+           rate yet. */
+        const rate = $('drRate')
+        if (key) {
+          rate.hidden = false
+          rate.dataset.key = key
+          const open = row ? openRw(row) : null
+          $('drRedo').dataset.redo = key
+          $('drRedo').classList.toggle('redo--on', !!open)
+        } else {
+          rate.hidden = true
+        }
+        $('drOpen').href = route
+        const f = $('drFrame')
+        f.onload = () => pin && dropPin(f, pin)
+        f.src = route
+        dr.hidden = false
+        document.body.style.overflow = 'hidden'
+      }
+
+      /* The drawer and the app are the same origin, so the pin goes INTO the
+         iframe's document rather than floating over it — that way it scrolls
+         with the content and stays on the element it marks.
+
+         Retried, not fired once: `load` fires when the HTML document is done,
+         but the app inside is a React SPA that mounts afterwards. At that
+         moment the body is still near-zero height, so a pin placed at y=900
+         lands past the end of the document and the scroll goes nowhere. The
+         retry re-places it as the page grows and stops once the body is tall
+         enough to actually hold it. */
+      function closeDrawer() {
+        dr.hidden = true
+        document.querySelectorAll('tr.is-current').forEach((el) => el.classList.remove('is-current'))
+        /* Blank the frame: otherwise the app keeps running behind the scrim,
+           with its own timers, fetches and annotation toolbar alive. */
+        $('drFrame').src = 'about:blank'
+        document.body.style.overflow = ''
+      }
+
+      function dropPin(frame, pin) {
+        const y = Number(pin.y) || 0
+        let tries = 0
+
+        const place = () => {
+          let d
+          try { d = frame.contentDocument } catch { return } // navigated cross-origin
+          if (!d || !d.body) { if (++tries < 40) setTimeout(place, 100); return }
+
+          let el = d.getElementById('fixlog-pin')
+          if (!el) {
+            el = d.createElement('div')
+            el.id = 'fixlog-pin'
+            el.textContent = pin.num || '1'
+            /* Literal colours on purpose: this node is injected into ANOTHER
+               document (the app's), which has never seen this page's tokens
+               and must not be made to depend on them. */
+            el.style.cssText = [
+              'position:absolute', 'transform:translate(-50%,-50%)',
+              'z-index:2147483647', 'width:28px', 'height:28px',
+              'border-radius:50%', 'display:flex', 'align-items:center',
+              'justify-content:center', 'background:#f5a524', 'color:#1a2333',
+              'font:700 13px/1 system-ui,sans-serif',
+              'box-shadow:0 0 0 3px rgba(245,165,36,.45), 0 2px 10px rgba(0,0,0,.35)',
+              'pointer-events:none',
+            ].join(';')
+            d.body.appendChild(el)
+          }
+          el.style.left = `${pin.x}%`
+          el.style.top = `${y}px`
+
+          /* Keep going until the document is genuinely tall enough for the
+             pin's position to mean anything — otherwise we would scroll to a
+             page that has not been laid out yet. */
+          const tall = d.documentElement.scrollHeight > y + 40
+          if (tall) {
+            frame.contentWindow.scrollTo({ top: Math.max(0, y - 220) })
+          }
+          if (++tries < 40 && !tall) setTimeout(place, 100)
+        }
+
+        place()
+      }
+
+      /* Group-header route → drawer with no row context: cursor parks at -1
+         so ‹ › disable themselves and the position readout stays blank. */
+      document.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-open-route]')
+        if (!b) return
+        cursor = -1
+        openDrawer(b.dataset.openRoute, null, '', null)
+      })
+
+      $('drScrim').addEventListener('click', closeDrawer)
+      $('drClose').addEventListener('click', closeDrawer)
+      $('drPrev').addEventListener('click', () => openAt(cursor - 1))
+      $('drNext').addEventListener('click', () => openAt(cursor + 1))
+      document.addEventListener('keydown', (e) => {
+        if (dr.hidden) return
+        /* The dialog sits on top of the drawer: while it is open the keyboard
+           belongs to it, or typing a note would walk the drawer and one Escape
+           would close both at once. */
+        if (!pop.hidden) return
+        if (e.key === 'Escape') closeDrawer()
+        if (e.key === 'ArrowLeft') openAt(cursor - 1)
+        if (e.key === 'ArrowRight') openAt(cursor + 1)
+      })
+      /* Row opens the screen — but not when the click was aimed at a control
+         that lives inside the same row: any button (Деталі, send-back), the
+         selection checkbox, or a header. */
+      document.addEventListener('click', (e) => {
+        if (e.target.closest('button, a, input, th')) return
+        const tr = e.target.closest('tr[data-route]')
+        if (!tr) return
+        const i = Number(tr.dataset.i)
+        if (Number.isInteger(i)) openAt(i)
+      })
+
+      /* ── Note actions ─────────────────────────────────────────────────────
+         Дві дії, і обидві — тільки на ще не взятій ноті. Resolve = PATCH
+         {"status":"resolved"}: правку зробили повз конвеєр, і нота йде НЕ в
+         нікуди — сторож підбирає її як сирітку в `resolved` і закриває як
+         звичайну правку, з текою `data/fixes/<id>/` і рядком в індексі без
+         опису. Це і є сенс дії — записати правку, яку зробили руками; кнопка
+         про це й каже. Delete = DELETE: ноту знято зовсім; озброюється першим кліком
+         замість модалки, другий клік протягом трьох секунд підтверджує,
+         бездіяльність роззброює.
+
+         «Send back» на зробленій ноті звідси прибрано разом зі станом
+         «чекає на перевірку»: закривати ноту більше не людський крок, це
+         робить сторож. Незадоволений результатом користувач ставить нову
+         ноту прямо на екрані, де й дивиться правку. */
+      document.addEventListener('click', async (e) => {
+        const del = e.target.closest('[data-del]')
+        const resolve = e.target.closest('[data-resolve]')
+        if (!del && !resolve) return
+        try {
+          if (del) {
+            if (!del.classList.contains('is-armed')) {
+              del.classList.add('is-armed')
+              del.title = 'Click again to delete'
+              setTimeout(() => {
+                del.classList.remove('is-armed')
+                del.title = 'Delete (second click confirms)'
+              }, 3000)
+              return
+            }
+            const r = await fetch(`${ANN}/notes/${encodeURIComponent(del.dataset.del)}`, { method: 'DELETE' })
+            if (!r.ok) throw new Error('HTTP ' + r.status)
+          } else {
+            const r = await fetch(`${ANN}/notes/${encodeURIComponent(resolve.dataset.resolve)}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'resolved' }),
+            })
+            if (!r.ok) throw new Error('HTTP ' + r.status)
+          }
+          load()
+        } catch (err) {
+          /* #note, not #warn: load() repaints #warn every cycle. */
+          $('note').innerHTML = `<div class="err">Action failed: ${esc(err.message)}</div>`
+        }
+      })
+
+      /* ── Group-by-route toggle ────────────────────────────────────────────
+         A view mode, not a filter: the same rows, partitioned per screen.
+         Remembered like the theme — a reviewer who thinks in screens always
+         thinks in screens. */
+      let grouped = localStorage.getItem('fixlog-group') === '1'
+      const setMode = (on) => {
+        grouped = on
+        localStorage.setItem('fixlog-group', on ? '1' : '0')
+        $('segAll').setAttribute('aria-pressed', String(!on))
+        $('segPages').setAttribute('aria-pressed', String(on))
+        render()
+      }
+      /* Не тумблер: натиск на вже вибраний сегмент нічого не робить, бо
+         сегмент — це стан, а не дія. */
+      $('segAll').addEventListener('click', () => grouped && setMode(false))
+      $('segPages').addEventListener('click', () => grouped || setMode(true))
+      setMode(grouped)
+
+      /* ── Theme ────────────────────────────────────────────────────────────
+         The boot script in <head> chose the initial theme; this only has to
+         flip and remember. Remembering makes the OS preference a default,
+         never an override of an explicit choice. */
+      $('theme').addEventListener('click', () => {
+        const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'
+        document.documentElement.dataset.theme = t
+        localStorage.setItem('fixlog-theme', t)
+      })
+
+      /* ── Details / rework dialog ──────────────────────────────────────── */
+      const pop = $('pop')
+      let popKey = ''
+
+      /* Two modes, one dialog: reading what a fix did, and telling it to be
+         redone. They share the same subject line, so splitting them into two
+         components would duplicate more than it separates. */
+      function openPop(key, label, mode) {
+        popKey = key
+        const details = mode === 'info'
+        $('popTitle').textContent = details ? 'What was done' : 'Send back'
+        const row = state.rows.find((r) => r.key === key)
+        $('popSub').innerHTML =
+          `${row && row.num ? `<span class="id">${row.num}</span> ` : ''}${esc(label || '')}`
+        const open = row ? openRw(row) : null
+
+        const body = $('popBody')
+        body.hidden = !details
+        if (details) {
+          /* Chronological: what the fix did first, then the thread — each
+             iteration is note (why it was rejected) plus, once closed, what
+             the redo changed. This dialog is the whole corpus entry in one
+             view: запит → зроблено → чому не влаштувало → що виправлено. */
+          const thread = (row ? rwOf(row) : []).map((rw, j) =>
+            `<div class="pop__it${rw.done ? '' : ' pop__it--open'}">
+              <div class="pop__it-head">rework ${j + 1} · ${
+                rw.done ? 'fixed' : 'open'
+              }${rw.at ? ' · ' + hhmm(Date.parse(rw.at)) : ''}</div>
+              <div>${inline(rw.note || '')}</div>
+              ${rw.result ? `<div class="pop__it-res">${inline(rw.result)}</div>` : ''}
+            </div>`).join('')
+          /* Розмова над живою нотою (`thread[]` з контракту нот): агент
+             перепитує, людина відповідає. Той самий діалог, бо це той самий
+             жанр — усе, що сказали ПРО цю правку, в одному місці. */
+          const talk = ((row && row.thread) || []).map((m) =>
+            `<div class="pop__it">
+              <div class="pop__it-head">${m.role === 'human' ? 'you' : 'agent'}${
+                m.at ? ' · ' + hhmm(Date.parse(m.at)) : ''
+              }</div>
+              <div>${inline(m.content || '')}</div>
+            </div>`).join('')
+          /* Елемент, на якому поставили ноту. Йде ПЕРШИМ: питання, з яким
+             сюди відкривають живу ноту, — «про що взагалі мова», і воно
+             старше за «що з нею робили».
+
+             `outerHTML` свідомо не показуємо, хоч він у ноті є. Це обрізаний
+             на 2048 символах однорядковий шматок розмітки з інлайновими
+             атрибутами — у діалозі він виглядав би сміттям і витіснив би
+             рядки, які справді ведуть до коду. Усе, що з нього потрібно для
+             впізнання елемента (тег, класи, текст), лежить в окремих полях
+             контракту й показане тут окремо.
+
+             Порожні поля пропускаються, а не малюються прочерками: у
+             діалозі, на відміну від таблиці, немає сітки, яку треба
+             тримати. */
+          const el = row && row.el
+          const pair = (k, v, prose) =>
+            v ? `<dt>${k}</dt><dd${prose ? ' class="is-prose"' : ''}>${esc(v)}</dd>` : ''
+          const elBlock = el
+            ? (() => {
+                const parts = [
+                  pair('screen', routeOf(el.url) || el.url),
+                  /* Селектор — те, чим агент знайде елемент. Коли стабільного
+                     не вийшло, контракт гарантує fullPath, і показувати треба
+                     саме його: інакше в найважчому випадку рядок порожній. */
+                  el.selector
+                    ? pair('selector', el.selector)
+                    : pair('path', el.fullPath),
+                  pair('element', el.tagName
+                    ? el.tagName.toLowerCase() + (el.classes ? '.' + el.classes.trim().split(/\s+/).join('.') : '')
+                    : ''),
+                  pair('components', el.components.join(' ← ')),
+                  pair('text', el.text, true),
+                ].join('')
+                return parts ? `<dl class="pop__el">${parts}</dl>` : ''
+              })()
+            : ''
+          body.innerHTML =
+            elBlock +
+            (row && row.did
+              ? inline(row.did)
+              : talk || elBlock ? '' : '<span class="muted">No description.</span>') +
+            talk + thread
+        }
+        /* The form only exists in rework mode. Re-opening while an iteration
+           is still open pre-fills its note: sending again AMENDS the open
+           instruction (the server keeps one open iteration per fix). */
+        $('popNote').hidden = details
+        $('popSend').hidden = details
+        $('popCancel').textContent = details ? 'Close' : 'Cancel'
+        $('popNote').value = open ? open.note : ''
+        $('popErr').textContent = ''
+        pop.hidden = false
+        if (!details) $('popNote').focus()
+      }
+      const closePop = () => { pop.hidden = true; popKey = '' }
+
+      $('popScrim').addEventListener('click', closePop)
+      $('popCancel').addEventListener('click', closePop)
+      document.addEventListener('keydown', (e) => {
+        if (!pop.hidden && e.key === 'Escape') closePop()
+      })
+
+      document.addEventListener('click', (e) => {
+        const info = e.target.closest('[data-info]')
+        if (info) {
+          e.stopPropagation()
+          const key = info.dataset.info
+          const row = state.rows.find((r) => r.key === key)
+          openPop(key, row ? plain(row.req) : '', 'info')
+          return
+        }
+        const b = e.target.closest('[data-redo]')
+        if (!b) return
+        e.stopPropagation() // must not also open the drawer behind it
+        const key = b.dataset.redo
+        const row = state.rows.find((r) => r.key === key)
+        openPop(key, row ? plain(row.req) : '', 'redo')
+      })
+
+      $('popSend').addEventListener('click', async () => {
+        const note = $('popNote').value.trim()
+        if (!note) { $('popErr').textContent = 'Say what is wrong'; return }
+        const btn = $('popSend')
+        btn.disabled = true
+        try {
+          const r = await fetch(`${RATE}/rework`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: popKey, note }),
+          })
+          const data = await r.json().catch(() => ({}))
+          if (!r.ok || !data.ok) throw new Error(data.error || 'HTTP ' + r.status)
+          state.ratings[popKey] = data.rating
+          closePop()
+          render()
+        } catch (err) {
+          $('popErr').textContent = 'Send failed: ' + err.message
+        } finally {
+          btn.disabled = false
+        }
+      })
+
+      /* ── Живий фавікон ─────────────────────────────────────────────────
+         Цю сторінку тримають у фоновій вкладці й позирають на неї, поки
+         конвеєр доробляє. Заголовок уже несе лічильники, але у згорнутій
+         вкладці з нього видно щонайбільше пару літер — а іконку видно
+         завжди. Тож стан «зараз щось у роботі» живе саме в ній.
+
+         Не GIF: Chrome анімовані GIF-фавікони не програє взагалі (Firefox
+         програє). Єдиний спосіб, що працює скрізь, — перемальовувати
+         <canvas> і щоразу підставляти свіжий data-URL у той самий
+         <link rel=icon>.
+
+         Крок дискретний — 12 поділок, а не плавний оберт — і це рішення, не
+         економія: у фоновій вкладці браузер тротлить таймери приблизно до
+         секунди, тож плавна анімація там усе одно розсипалась би на ривки.
+         Дванадцять поділок з таким кроком читаються як стрілка годинника:
+         повільно — але навмисно повільно, а не залипло.
+
+         Кадри малюються КОДОМ (дуги по колу), а не перемальовуванням
+         вихідної іконки: drawImage з SVG-джерела без явних width/height у
+         частині рушіїв мовчки не малює нічого, тож заміна <link> на inline
+         data:image/svg+xml крутілки не стосується.
+
+         Коли роботи немає, повертається рівно той href, що стояв у розмітці
+         на старті (зараз — inline SVG-знак тулзи). Іконка-крутілка це стан,
+         а не нова айдентика сторінки. */
+      const favicon = (() => {
+        const link = document.querySelector('link[rel="icon"]')
+        /* getAttribute, а не .href: беремо рядок як він написаний у HTML,
+           щоб віддати назад той самий data:-URL без перетравлення. */
+        const IDLE = link.getAttribute('href')
+        const N = 32          // 2× за 16px слот вкладки — щоб не мулило
+        const R = 13          // зовнішній радіус поділки
+        const TICKS = 12
+        const cv = document.createElement('canvas')
+        cv.width = cv.height = N
+        const cx = cv.getContext('2d')
+
+        /* Канва не розуміє var(), тож колір беремо з того самого токена, що
+           й уся сторінка, — інакше при перемиканні теми іконка лишалась би
+           від попередньої. Якщо браузер не парсить oklch у канві, він мовчки
+           ігнорує присвоєння і малює чорним, тому перевіряємо один раз. */
+        const probe = document.createElement('canvas').getContext('2d')
+        probe.strokeStyle = '#000000'
+        probe.strokeStyle = 'oklch(0.72 0.13 245)'
+        const OKLCH = probe.strokeStyle !== '#000000'
+        const colour = () => {
+          if (!OKLCH) return '#4aa3ff'
+          const v = getComputedStyle(document.documentElement)
+            .getPropertyValue('--info').trim()
+          return v || '#4aa3ff'
+        }
+
+        let phase = 0
+        let timer = null
+        let on = false
+
+        const frame = () => {
+          cx.clearRect(0, 0, N, N)
+          cx.strokeStyle = colour()
+          cx.lineCap = 'round'
+          cx.lineWidth = 3.4
+          for (let i = 0; i < TICKS; i++) {
+            /* Голова найяскравіша, хвіст згасає. Рух несе прозорість, а не
+               колір, — тому це читається як один об'єкт, що обертається, а
+               не як дванадцять крапок, що блимають. */
+            const age = (i - phase + TICKS * 2) % TICKS
+            cx.globalAlpha = 0.12 + 0.88 * (1 - age / TICKS)
+            const a = (i / TICKS) * Math.PI * 2 - Math.PI / 2
+            cx.beginPath()
+            cx.moveTo(N / 2 + Math.cos(a) * (R - 5), N / 2 + Math.sin(a) * (R - 5))
+            cx.lineTo(N / 2 + Math.cos(a) * R, N / 2 + Math.sin(a) * R)
+            cx.stroke()
+          }
+          cx.globalAlpha = 1
+          link.href = cv.toDataURL('image/png')
+          phase = (phase + 1) % TICKS
+        }
+
+        /* Перемикається лише на зміні стану: інакше кожен цикл опитування
+           гнав би зайвий toDataURL і смикав <link> без причини. */
+        const set = (running) => {
+          if (running === on) return
+          on = running
+          if (running) {
+            frame()
+            timer = setInterval(frame, 90)
+          } else {
+            clearInterval(timer)
+            timer = null
+            link.href = IDLE
+          }
+        }
+        set.isRunning = () => on
+        return set
+      })()
+
+      /* ── Boot ─────────────────────────────────────────────────────────── */
+
+      async function load() {
+        /* The log renders FIRST, from a static file on the same origin. The
+           annotation server and the ratings service are both optional, remote,
+           and can be slow or firewalled — awaiting them before the first paint
+           is what turned this page blank. Draw what is certain, then enrich. */
+        const mdRes = await fetch('/fixlog.md?t=' + Date.now())
+          .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text() })
+          .then((v) => ({ v }), (e) => ({ e: e.message }))
+
+        /* Composed OFF-SCREEN. state.rows is not touched until the whole new
+           snapshot is ready: publishing the half-built list (done rows only,
+           annotations still in flight) made every cycle collapse the table's
+           height and grow it back — the visible "jump". The one exception is
+           the very first boot, where partial data beats a blank page. */
+        const done = []
+        if (!mdRes.e) {
+          parseDone(mdRes.v).forEach((r, i) =>
+            done.push({ ...r, status: 'done', routePath: r.routeRes || plain(r.route), ts: 0, fresh: i + 1 }))
+        }
+        if (!state.rows.length && done.length) {
+          state.rows = done.slice()
+          render()
+        }
+
+        /* НЕ скидаємо `ratingsErr` тут. Цей запит навмисно не чекають (він
+           повільний і необов'язковий), тож його `.catch` спрацьовує вже
+           ПІСЛЯ того, як смужка проблем нижче зібрана. Поки помилку гасили на
+           початку кожного циклу, вона не встигала показатись жодного разу:
+           записалась о 10-й секунді, стерлась на 10-й з половиною. Тепер вона
+           живе, доки запит не пройде вдало, — і саме успіх її й знімає. */
+        getJSON(`${RATE}/ratings`)
+          .then((v) => {
+            state.ratingsErr = ''
+            /* Re-render only when the verdicts actually changed — this fires
+               every cycle, and an idle page must not repaint on a no-op. */
+            const changed = JSON.stringify(v) !== JSON.stringify(state.ratings)
+            state.ratings = v
+            if (changed) render()
+          })
+          /* Keep the last good snapshot on a transient failure: blanking the
+             threads for one dropped request is worse than being 10s stale. */
+          .catch((e) => { state.ratingsErr = e.message })
+
+        const open = await loadOpen().then((v) => ({ v }), (e) => ({ e: e.message }))
+        const md = mdRes
+        const rows = done.slice()
+        /* x is a percentage of the document width, y an absolute pixel
+           offset — that is how the toolbar stores a pin. Carried through so
+           the drawer can drop the same pin back onto the screen. */
+        /* Коли правка з'явилася — це `createdAt` СЕРВЕРА, а не `timestamp`
+           тулбара, і різниця тут не академічна.
+
+           `timestamp` ставить браузерний тулбар у мить, коли користувач тицьнув
+           пін, і тримає його в localStorage. Тулбар періодично перезаливає свої
+           локальні копії — під НОВИМ id, але зі СТАРИМ `timestamp`. Тобто
+           запис, який щойно потрапив у чергу, приносить із собою час, коли його
+           набрали в браузері годинами раніше. На сервері це видно впритул:
+           вісім анотацій із `createdAt` 16:18:40.95x (один bulk-POST, id
+           відрізняються мілісекундами) несуть `timestamp` від 11:09 до 15:18 —
+           розкид у п'ять годин там, де насправді один момент. Колонка «Час»
+           показувала 11:09, а «щойно» перетворювалося на «5год» для рядка, що
+           з'явився секунду тому.
+
+           `createdAt` такої проблеми не має: сервер штампує його сам, і він
+           збігається з часом, зашитим у сам id (id = base36 від Date.now()
+           клієнта в мить запису — звіряється до мілісекунди). Той самий корінь
+           уже ламав лічильник роботи; його полагодили через `updatedAt`, а поле
+           `at` лишилося сидіти на битому джерелі — оце й лагодиться тут.
+
+           `timestamp` лишається запасним варіантом: на давніх записах, зроблених
+           до появи `createdAt`, він єдиний час, який взагалі є. */
+        const mk = (a, st) => {
+          const created = Date.parse(a.createdAt || '') || a.timestamp || 0
+          /* Пін. Нота більше не носить готових x/y тулбара — є `rect`
+             (getBoundingClientRect у мить кліку) і `viewport`. Звідси x у
+             відсотках ширини й y у пікселях, як їх чекає dropPin. Прокрутки
+             в контракті немає, тож на прокрученому екрані пін сяде вище за
+             сам елемент — це наближення з реальних даних, а не вигаданe
+             поле; краще приблизний маркер, ніж жодного. */
+          const rect = a.rect
+          const vw = (a.viewport && a.viewport.w) || 0
+          const pinX = rect && vw ? ((rect.x + rect.w / 2) / vw) * 100 : undefined
+          const pinY = rect ? rect.y + rect.h / 2 : undefined
+          return {
+            key: a.id, status: st, time: hhmm(created), routePath: routeOf(a.url),
+            req: a.note || '',
+            /* Смуга виконавця тепер відома і для живої ноти. Раніше тут стояв
+               прочерк, бо ноту брав чоловік руками і хто саме — сторінка
+               знати не могла. Тепер ноту бере сторож і запускає виконавця
+               headless-запуском Claude, тобто «взято» = «claude», і рядок
+               малюється тим самим знаком, що й архівні рядки з лога: мова
+               колонки одна на всю таблицю. Не взята нота лишається з
+               прочерком — там справді ще нікого немає. */
+            laneRaw: st === 'new' ? '' : 'claude',
+            did: '', ts: created,
+            thread: Array.isArray(a.thread) ? a.thread : [],
+            /* Контекст елемента, на якому поставили ноту. Тримається сирим
+               (як у контракті), а не склеєним у рядок: діалог Details сам
+               вирішує, що з цього показати й у якому порядку. */
+            el: {
+              url: a.url || '',
+              selector: a.selector || '',
+              fullPath: a.fullPath || '',
+              tagName: a.tagName || '',
+              classes: a.classes || '',
+              text: a.text || '',
+              components: Array.isArray(a.components) ? a.components : [],
+            },
+            /* `at` — коли анотація потрапила в чергу (для «3хв тому» і смуг
+               давності).
+
+               `startedAt` — НАБЛИЖЕННЯ, а не факт. Чесного «коли взяли» в
+               даних немає: контракт нот (`docs/contract.md`) знає три статуси
+               (pending / working / resolved) і жодного поля з моментом
+               переходу, а `updatedAt` сервер рухає на БУДЬ-ЯКОМУ PATCH —
+               зміні статусу, репліці в треді, завантаженні кадру. Тож для
+               ноти, яку взяли годину тому і в якій щойно відповіли, годинник
+               роботи перезапуститься з нуля. Це найкраще, що є, і воно значно
+               ближче до правди, ніж час створення, — але поки в контракті не
+               з'явиться власне поле, комірка може занижувати. */
+            at: created,
+            startedAt: Date.parse(a.updatedAt || '') || 0,
+            x: pinX, y: pinY,
+            /* Live annotations always outrank logged ones: they are, by
+               definition, the work that has not happened yet. */
+            fresh: 1e12 + created,
+          }
+        }
+        /* Ghost filter — тепер СТРАХОВКА, а не механізм.
+
+           Дублі народжувалися з того, що виконавець видаляв закриту анотацію,
+           а тулбар перезаливав із localStorage усе, чийого id сервер не знає.
+           Обидва кінці полагоджено там, де вони живуть: виконавцям заборонено
+           DELETE (анотація лишається `resolved`, і тулбару нема що доливати),
+           а диспетчер відсіює на вході за підписом «роут + елемент + текст»,
+           не за id. Фільтр лишається для копій, що вже лежать по браузерах із
+           тих часів: сервер про них не знає, поки вкладку не оновлять.
+
+           Збіг шукаємо ЗА ID, а не за підписом «роут + текст». Підпис не
+           працював узагалі: колонка «Роут» у лозі — рукописна проза
+           («`/search` (`Search` → `.sr-featured__tag`)»), чистим шляхом була
+           лише 71 комірка з 292, а текст запиту в індексі несе суфікс `(id)`,
+           якого нормалізація не знімала. Тобто фільтр не ловив нічого.
+           Тепер ловити є чим: індекс має колонку `ID`, а ім'я теки правки для
+           ноти — це і є її власний id (`n-…`), тож дубль впізнається точним
+           порівнянням ключів. */
+        const doneKeys = new Set(done.map((r) => r.key).filter(Boolean))
+        const isGhost = (a) => doneKeys.has(a.id)
+
+        let ghosts = 0
+        if (!open.e) {
+          for (const a of open.v.pending) {
+            if (isGhost(a)) { ghosts++; continue }
+            rows.push(mk(a, 'new'))
+          }
+          for (const a of open.v.working) {
+            if (isGhost(a)) { ghosts++; continue }
+            rows.push(mk(a, 'wip'))
+          }
+          /* `resolved` малюється як `wip`, і власного стану більше не має:
+             сторож закриває таку ноту сам, щойно допише рядок у fixlog.md,
+             тож вона живе секунди. Ці секунди конвеєр із нею ще працює —
+             отже «в роботі» тут не наближення, а правда.
+
+             Без ghost-фільтра свідомо: сторож дописує рядок в індекс раніше,
+             ніж робить `DELETE` ноти, і ключ рядка — це той самий id. Тобто
+             фільтр за id відсіяв би рядок за мить до того, як нота закриється,
+             і той просто блимнув би. Фільтр стережеться дублів тулбара, а
+             тулбар перезаливає лише нові ноти, не завершені. */
+          for (const a of open.v.resolved) rows.push(mk(a, 'wip'))
+        }
+        /* Every fix gets a number, closed ones included — it is the short
+           handle a human quotes back ("правка 14"), and the composite key in
+           the ID column is too long to say out loud.
+
+           Ordered oldest-first across the whole set, so a number, once given,
+           never changes: the log only ever grows at the end, and live
+           annotations sort after everything already logged. The same number is
+           the circle drawn on the screen in the drawer. */
+        rows.sort((a, b) => (a.fresh || 0) - (b.fresh || 0))
+          .forEach((r, i) => { r.num = i + 1 })
+        state.rows = rows
+        render()
+
+        const problems = []
+        /* Перша й найважча: якщо скрипт десь упав, решта чисел на сторінці
+           може бути просто неповною. */
+        if (fatalMsg) problems.push(fatalMsg)
+        if (open.e) problems.push(`Notes server (${ANN}) — ${open.e}`)
+        if (md.e) problems.push(`fixlog.md — ${md.e}`)
+        if (state.ratingsErr) problems.push(`Ratings (${RATE}) — ${state.ratingsErr}`)
+        /* Same-string guard: these repaint every cycle, and an idle strip
+           must not be rebuilt (and reflowed) for identical content. */
+        const warnHtml = problems.length
+          ? `<div class="err">${problems.map(esc).join(' · ')}</div>` : ''
+        if ($('warn').innerHTML !== warnHtml) $('warn').innerHTML = warnHtml
+
+        /* Рахуємо ЕФЕКТИВНИЙ статус (`stOf`), а не сирий, і рахуємо по тих
+           самих `rows`, що намальовані. Інакше числа розходяться з таблицею:
+           жива нота з відкритою доробкою підписана «Sent back», але сирий
+           статус у неї `wip` — і вона потрапляла водночас у «in progress» і в
+           «sent back» та ще й крутила фавікон. `done` так само рахувалось як
+           «усі рядки лога», включно з тими, що зараз повернуті на доробку. */
+        const byStatus = (k) => rows.filter((r) => stOf(r) === k).length
+        const nAsk = byStatus('ask')
+        const nNewShown = byStatus('new')
+        const nWipShown = byStatus('wip')
+        const nRedo = byStatus('redo')
+        const nDoneShown = byStatus('done')
+        /* The tally carries the same marks as the Статус column, so it
+           doubles as that column's legend. The conditional entries only
+           appear when they have something to say — a permanent «0 на
+           доробці» would be noise in the busiest line on the page. */
+        const items = []
+        /* Перший у смужці з тієї ж причини, з якої перший у сортуванні: це
+           єдина робота, розблокувати яку може тільки той, хто дивиться. */
+        if (nAsk) items.push(['ask', nAsk, `needs you <span class="tally__hint">— answer in the page overlay</span>`])
+        items.push(
+          ['new', nNewShown, 'new'],
+          ['wip', nWipShown, 'in progress'],
+        )
+        if (nRedo) items.push(['redo', nRedo, 'sent back'])
+        items.push(['done', nDoneShown, nDoneShown === 1 ? 'fix' : 'fixes'])
+        if (ghosts) items.push(['done', ghosts, 'duplicates hidden'])
+        const countHtml = items.map(([k, n, word]) =>
+          `<span class="tally__i">${stMark(k)}<b>${n}</b> ${word}</span>`
+        ).join('')
+        if ($('count').innerHTML !== countHtml) $('count').innerHTML = countHtml
+        /* Ті САМІ числа, що в смужці лічильників, і в тому ж порядку: нове /
+           в роботі / архів. Заголовок брав сирі довжини списків із сервера,
+           смужка — відфільтровані рядки, і на кожному ghost чи доробці вкладка
+           обіцяла одне, а сторінка показувала інше. Одне джерело — один звіт. */
+        document.title = `Comments Harness (${nNewShown}/${nWipShown}/${nDoneShown})`
+        /* Крутиться рівно з того числа, що видно в лічильнику «в роботі», а
+           не з сирого open.v.working: дублі, приховані як ghost, у таблиці не
+           показані, і іконка не має обіцяти роботу, якої на екрані немає. */
+        favicon(nWipShown > 0)
+      }
+
+
+      /* Sticky engages silently; the shadow needs to know. Passive and
+         cheap: one class flip when the panel's top crosses the viewport. */
+      /* Одна смуга заголовків на сторінку — та сама в обох режимах, і вона
+         ніколи не ховається. Список із двох і перевірка `.hidden` лишалися з
+         часів, коли таблиця й панелі мали кожна свою шапку. */
+      const headWrap = $('gheadWrap')
+      addEventListener('scroll', () => {
+        headWrap.classList.toggle('is-stuck', headWrap.getBoundingClientRect().top < 0)
+      }, { passive: true })
+
+      /* Auto-refresh. The dispatcher works while this page is open, so a
+         static snapshot is stale within a minute.
+
+         Three guards, each for a real failure this page has already shown:
+         — paused while a dialog is open, so a reload cannot yank the popup or
+           the drawer out from under a click;
+         — paused while the tab is hidden, so a page left open overnight is not
+           still polling a dev server every 10s;
+         — skipped if the previous cycle has not finished, so a slow pass
+           never stacks on top of the next one. */
+      let inFlight = false
+      const guardedLoad = async () => {
+        if (inFlight) return
+        if (!pop.hidden || !dr.hidden) return
+        /* Ховану вкладку не опитуємо — окрім випадку, коли щось у роботі.
+           Причина в іконці: крутілку видно саме тоді, коли на сторінку не
+           дивляться, і якщо цикл при цьому спить, вона крутитиметься ще
+           довго після того, як конвеєр усе доробив. Спінер, що бреше, гірший
+           за його відсутність. Правило «сторінка, забута на ніч, не довбає
+           дев-сервер» лишається чинним: без роботи в черзі опитування так
+           само зупиняється. */
+        if (document.hidden && !favicon.isRunning()) return
+        inFlight = true
+        try { await load() } finally { inFlight = false }
+      }
+      setInterval(guardedLoad, 10000)
+      /* Coming back to the tab should feel current immediately, not in ten
+         seconds. */
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) guardedLoad()
+      })
+
+      load()
+    </script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+[Unit]
+# ЗГЕНЕРОВАНО з server/ratings.service.template — див. застереження в
+# notes.service.template.
+#
+# Другий сервер: вердикти рев'ю й черга доробок. Окремо від нот навмисно —
+# інший жанр даних (docs/review-page.md). Без нього кнопка Send back на
+# рев'ю-сторінці пише в порожнечу.
+Description={{PREFIX}} comments-harness ratings + rework queue (port {{RATINGS_PORT}})
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{PROJECT_ROOT}}
+ExecStart={{NODE}} {{HARNESS_DIR}}/server/fixlog-server.mjs
+Restart=always
+RestartSec=3
+StandardInput=null
+
+[Install]
+WantedBy=default.target
