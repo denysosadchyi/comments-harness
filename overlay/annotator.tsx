@@ -293,6 +293,18 @@ function buildFullPath(el: Element): string {
   return parts.join(' > ')
 }
 
+/* Показуваний хвіст шляху. `fullPath` — запасний якір для агента на випадок,
+   коли стабільного селектора немає; людині він не каже нічого, а місця займає
+   чотири рядки — більше, ніж уся розмова під ним. Тому в поповері видно останні
+   кілька сегментів, а цілий шлях лишається в `title`. У ноту він і далі їде
+   ПОВНІСТЮ: міняється показ, не контракт. */
+const PATH_TAIL = 3
+function pathTail(path: string): string {
+  const parts = path.split(' > ')
+  if (parts.length <= PATH_TAIL) return path
+  return `… > ${parts.slice(-PATH_TAIL).join(' > ')}`
+}
+
 /* ── React component chain ────────────────────────────────────────────────
    The fiber hanging off the DOM node, then `_debugOwner` upward: who rendered
    this, who rendered them. It is the fastest route from a pixel to a file
@@ -458,11 +470,17 @@ function spacingPhrase(s: Spacing): string {
    мають вантажитись у кожен роут дев-збірки заради оверлея, яким користуються
    не щохвилини. */
 
-const SHOT_PAD = 24
-/* Для проміжку поле навколо ширше. Субʼєкт тут — порожнеча, і сама по собі
-   вона в кадрі не читається взагалі: порожнє місце виглядає однаково завжди.
-   Пояснює його рівно оточення, тож рамка бере сусідів (див. `Gap.context`) і
-   ще вдвічі більше повітря, щоб було видно, з чим цей проміжок порівнювати. */
+/* Поле навколо предмета — щедре, і це єдиний спосіб, яким у кадр потрапляє
+   контекст. Раніше контекст добувався інакше: вузький елемент підмінявся
+   батьком, тобто знімалось НЕ те, що виділили. Про це нижче, біля
+   `shotFrame`; тут важливо, що плата за скасування підміни — саме ця цифра.
+   Десятки пікселів навколо кнопки показують і рядок, у якому вона стоїть, і
+   сусідів, з якими її порівнюють, — при тому що предметом лишається кнопка. */
+const SHOT_PAD = 64
+/* Для проміжку поле навколо трохи менше, ніж для елемента, і це не описка:
+   субʼєктом там іде `Gap.context` — порожнеча РАЗОМ із сусідами, тобто
+   найближче оточення вже всередині рамки. Додавати йому стільки ж повітря
+   означало б відсунути глядача від дірки, заради якої нота й пишеться. */
 const SHOT_PAD_GAP = 48
 const SHOT_MAX_WIDTH = 1400
 const SHOT_MAX_SCALE = 2
@@ -485,36 +503,74 @@ type Shot =
   | { status: 'ready'; blob: Blob; url: string }
   | { status: 'failed'; reason: string }
 
-/* Дефект майже завжди живе МІЖ елементом і сусідами, тож вузький елемент сам
-   собою не пояснює нічого: кнопка, вирвана зі свого рядка, виглядає в кадрі
-   бездоганно. Тому все, вужче за третину вʼюпорта, знімається разом із
-   батьківським блоком. Далі одного рівня не піднімаємось: другий крок майже
-   завжди дає всю сторінку, а вона вже не кадр. */
-function shotSubject(el: Element): Element {
-  if (el.getBoundingClientRect().width >= window.innerWidth / 3) return el
-  const parent = el.parentElement
-  if (!parent || parent === document.body || parent === document.documentElement) return el
-  return parent
+/* Прямокутник предмета у координатах вʼюпорта. Елемент міряється тут-таки,
+   готовий прямокутник (проміжок) уже виміряний і йде як є. */
+function rectOf(subject: Element | Rect): Rect {
+  if (!(subject instanceof Element)) return subject
+  const r = subject.getBoundingClientRect()
+  return { x: r.left, y: r.top, w: r.width, h: r.height }
 }
 
-/* Поле навколо — і обрізка вʼюпортом: те, що за краєм екрана, браузер не
+/* ── Рамка кадру ──────────────────────────────────────────────────────────
+   Поле навколо — і обрізка вʼюпортом: те, що за краєм екрана, браузер не
    малював, і в кадрі воно вийшло б смугою тла.
 
+   ── Чому предмет більше не підміняється ──────────────────────────────────
+   Тут стояло правило «все, вужче за третину вʼюпорта, знімаємо разом із
+   батьком»: мовляв, кнопка, вирвана зі свого рядка, у кадрі виглядає
+   бездоганно. Обґрунтування вірне, висновок — ні. Воно пояснює, навіщо
+   потрібен КОНТЕКСТ, а не чому предмет можна підмінити іншим вузлом. На
+   практиці третина вʼюпорта — це майже все дрібне: кнопка, чип, заголовок,
+   мітка. Користувач цілився в кнопку, а прев'ю показувало цілу картку, і
+   з його боку це рівно «зняли не те, що я виділив».
+
+   Тепер предмет — завжди те, що виділили, а контекст дає поле навколо
+   (`SHOT_PAD`), яке рамка бере щедро. Правило підміни видалено, а не
+   сховане під прапорець: гілка, яку ніхто не вмикає, — це другий носій
+   істини, і наступного разу вони розійдуться.
+
    Субʼєктом може бути не лише елемент: у ноті про проміжок це прямокутник
-   порожнечі разом із сусідами, у якого власного вузла в DOM немає. Тому на
-   вході або елемент (тоді працює правило «вузьке знімаємо з батьком»), або
-   вже готовий прямокутник. */
+   порожнечі разом із сусідами, у якого власного вузла в DOM немає. */
 function shotFrame(subject: Element | Rect): { left: number; top: number; w: number; h: number } {
-  const isEl = subject instanceof Element
-  const pad = isEl ? SHOT_PAD : SHOT_PAD_GAP
-  const r = isEl
-    ? shotSubject(subject).getBoundingClientRect()
-    : { left: subject.x, top: subject.y, right: subject.x + subject.w, bottom: subject.y + subject.h }
-  const left = Math.max(0, Math.floor(r.left - pad))
-  const top = Math.max(0, Math.floor(r.top - pad))
-  const right = Math.min(window.innerWidth, Math.ceil(r.right + pad))
-  const bottom = Math.min(window.innerHeight, Math.ceil(r.bottom + pad))
+  const pad = subject instanceof Element ? SHOT_PAD : SHOT_PAD_GAP
+  const s = rectOf(subject)
+  const left = Math.max(0, Math.floor(s.x - pad))
+  const top = Math.max(0, Math.floor(s.y - pad))
+  const right = Math.min(window.innerWidth, Math.ceil(s.x + s.w + pad))
+  const bottom = Math.min(window.innerHeight, Math.ceil(s.y + s.h + pad))
   return { left, top, w: right - left, h: bottom - top }
+}
+
+/* ── Позначка предмета на самому кадрі ────────────────────────────────────
+   Оверлей на час зйомки прозорий — інакше в кадр потрапила б власна рамка
+   прицілу. Наслідок: на картинці немає ЖОДНОГО сліду того, що саме анотовано,
+   і чим щедріше поле навколо, тим гірше це читається. Тому предмет
+   обводиться вже по растру, у координатах кадру.
+
+   Дві обводки замість однієї барвистої: спершу світлий кант, потім темна
+   лінія по ньому. Кадр лягає на чужу сторінку будь-якої світлості, і жоден
+   ОДИН колір не читається і на білому, і на чорному; пара читається завжди,
+   а виглядає все одно як одна тонка лінія. Хроми немає навмисно: синій в
+   оверлеї означає «твій хід», і кадр такого не просить.
+
+   Малюється ДО стиснення, тож при вимушеному зменшенні вдвічі позначка
+   зменшується разом із кадром, а не з'їжджає з предмета. */
+function markSubject(canvas: HTMLCanvasElement, frame: { left: number; top: number }, scale: number, r: Rect) {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const x = (r.x - frame.left) * scale
+  const y = (r.y - frame.top) * scale
+  const w = Math.max(1, r.w * scale)
+  const h = Math.max(1, r.h * scale)
+  ctx.save()
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  ctx.lineWidth = 3 * scale
+  ctx.strokeRect(x, y, w, h)
+  ctx.strokeStyle = 'rgba(17,19,24,0.9)'
+  ctx.lineWidth = 1.25 * scale
+  ctx.strokeRect(x, y, w, h)
+  ctx.restore()
 }
 
 /* Прозорий PNG на місці сторінки читався б як дефект, тому тло беремо явно:
@@ -594,9 +650,40 @@ function showHost(host: HTMLElement) {
   if (shotHides === 0) host.style.removeProperty('opacity')
 }
 
-async function takeShot(subject: Element | Rect, host: HTMLElement): Promise<{ blob: Blob; url: string }> {
+async function takeShot(
+  subject: Element | Rect,
+  host: HTMLElement,
+  /* Що саме обвести в кадрі. Для блока це сам блок (він же субʼєкт), для
+     проміжку — смуга порожнечі, а НЕ весь субʼєкт: субʼєктом там іде
+     порожнеча разом із сусідами, і обводити його цілком означало б показати
+     «нота про оці два блоки», хоча вона про дірку між ними. */
+  mark: Rect,
+): Promise<{ blob: Blob; url: string }> {
   const frame = shotFrame(subject)
-  if (frame.w < 1 || frame.h < 1) throw new Error('element has no visible box')
+  /* ── Краще без кадру, ніж кадр не того місця ───────────────────────────
+     Хибний кадр гірший за відсутній: він не просто нічого не пояснює, він
+     активно відправляє виконавця не туди, і той навіть не має підстав
+     засумніватись. Правило «кадр ніколи не блокує ноту» це і дозволяє —
+     кинуте звідси падіння лише знімає прев'ю, нота йде далі своїм шляхом.
+
+     Вироджені випадки, які сюди доходять: нульова або відʼємна рамка (предмет
+     повністю за краєм екрана — обрізка вʼюпортом дає перевернутий
+     прямокутник), і нечислові координати (елемент без бокса, `display:
+     contents`, від'єднаний вузол). */
+  if (![frame.left, frame.top, frame.w, frame.h].every(Number.isFinite)) {
+    throw new Error('the frame is not measurable')
+  }
+  if (frame.w < 1 || frame.h < 1) throw new Error('the subject is outside the viewport')
+  /* І остання перевірка, яка ловить усе інше разом: те, що обводимо, мусить
+     лежати в рамці. Якщо предмет у кадр не потрапив — байдуже, через
+     обрізку, розбіжність систем координат чи субʼєкт не від того режиму, —
+     кадр показує чуже місце, і його не буде. */
+  const inFrame =
+    mark.x >= frame.left - 1 &&
+    mark.y >= frame.top - 1 &&
+    mark.x + mark.w <= frame.left + frame.w + 1 &&
+    mark.y + mark.h <= frame.top + frame.h + 1
+  if (!inFrame) throw new Error('the frame does not hold the picked subject')
 
   const { default: html2canvas } = await import('./vendor/html2canvas-pro.esm.js')
 
@@ -633,6 +720,8 @@ async function takeShot(subject: Element | Rect, host: HTMLElement): Promise<{ b
   } finally {
     showHost(host)
   }
+
+  markSubject(canvas, frame, scale, mark)
 
   let blob = await toPng(canvas)
   /* Одна спроба здути: щільний скрін на 2× буває важчий за ліміт сервера, і
@@ -903,14 +992,23 @@ const CSS_TEXT = `
 .smn-hit { pointer-events: auto; }
 
 /* ── Launcher ─────────────────────────────────────────────────────────────
-   Bottom-right, one row high, always the same things in the same order: the
+   Bottom centre, one row high, always the same things in the same order: the
    index with its count, the two crosshairs (block, then spacing), the theme.
    It is furniture — it must be findable without ever being the loudest thing
-   on somebody else's screenshot. */
+   on somebody else's screenshot.
+
+   Центрування — розтяжкою inset-inline: 0 плюс width: fit-content і
+   margin-inline: auto, а не відступом і не transform. Смужка міняє ширину
+   прямо в роботі: кнопка списку зникає, коли на екрані нема жодної ноти, і
+   зʼявляється з першою. Будь-яке «магічне» позиціювання від краю поїхало б
+   саме в цю мить; автоцентрування в розтяжці не має чому їхати, а transform
+   лишається вільним під анімації. */
 .smn-bar {
   position: fixed;
-  right: 12px;
+  inset-inline: 0;
   bottom: 12px;
+  width: fit-content;
+  margin-inline: auto;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -920,6 +1018,7 @@ const CSS_TEXT = `
   background: var(--bg-raised);
   box-shadow: var(--shadow-pop);
   pointer-events: auto;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 .smn-btn {
   display: inline-flex;
@@ -939,6 +1038,14 @@ const CSS_TEXT = `
               border-color var(--dur-fast) var(--ease-out),
               background-color var(--dur-fast) var(--ease-out);
 }
+/* Поки приціл увімкнено, смужка притухає, але лишається на місці й
+   клікабельною. Чому не сховати зовсім: кнопка — єдиний ВИДИМИЙ вихід із
+   режиму (Esc знає не кожен), і смужка, що зникає рівно тоді, коли з неї
+   треба вийти, — це пастка. Чому не лишити на повну: тепер вона стоїть по
+   центру низу, тобто рівно там, куди часто й цілишся. Притухла вона не
+   заважає дивитись на сторінку, а під курсором вертається на повну. */
+.smn-bar--aiming { opacity: 0.35; }
+.smn-bar--aiming:hover { opacity: 1; }
 .smn-btn:hover { background: var(--bg-hover); color: var(--ink); }
 .smn-btn:focus-visible { outline: none; box-shadow: var(--ring); }
 .smn-btn[aria-pressed='true'] { background: var(--info-soft); border-color: var(--info-line); color: var(--info); }
@@ -1282,6 +1389,9 @@ const CSS_TEXT = `
   overflow-wrap: anywhere;
 }
 .smn-target--none { color: var(--muted); }
+/* Хвіст шляху. Курсор — єдиний натяк, що під наведенням є повний шлях; іконки
+   чи кнопки цей рядок не заслуговує, він і так запасний якір, а не зміст. */
+.smn-path { cursor: help; }
 /* Рядок «що саме анотовано» для ноти про проміжок. Стоїть НАД селектором
    контейнера, бо предмет тут порожнеча, а контейнер — лише її адреса; якби
    першим ішов селектор, нота читалась би як нота про контейнер. */
@@ -1319,6 +1429,21 @@ img.smn-shot {
   color: var(--muted);
   font: 400 11px/1.4 var(--font-ui);
   text-align: center;
+}
+/* Заглушка на час зйомки — коробка того самого розміру, що й майбутній кадр:
+   aspect-ratio їй ставить сам композер із виміряних пропорцій предмета, а
+   стеля тут та сама, що й у картинки вище. Тому підміна заглушки кадром не
+   рухає ні поле, ні кнопки під ним. Центрування — flex, бо висота тепер не
+   від тексту, і padding більше не тримає його посередині. */
+.smn-shot--wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 168px;
+  /* Підлога — висота ВЛАСНОГО рядка заглушки, а не здогад про кадр: у дуже
+     широкого предмета пропорції дають смужку в півтора десятка пікселів, і
+     підпис у неї просто не вліз би. */
+  min-height: 2.6em;
 }
 
 .smn-note {
@@ -1369,30 +1494,62 @@ img.smn-shot {
    flex-дитина не має права стати нижчою за свій вміст і коробка просто
    вилазить за max-height замість того, щоб прокручуватись. */
 .smn-scroll { flex: 0 1 auto; min-height: 0; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
+/* ── Тред як розмова ──────────────────────────────────────────────────────
+   Репліки були блоками на всю ширину з підписом «you» / «agent» зверху. Читати
+   це як діалог не виходило: однослівне «yes» розтягувалось на весь рядок, і
+   єдине, чим відрізнявся автор, було слово в кутку — тобто авторство доводилось
+   ЧИТАТИ, а не бачити. Тепер його несуть позиція й форма, як у будь-якому
+   месенджері: свої репліки праворуч, агентові ліворуч, кут із боку автора
+   підрізаний. Підписи ролей після цього зайві й прибрані — роль лишилась в
+   aria-label черги, бо позиція для скрінрідера не існує.
+
+   Ширина — по вмісту зі стелею 85%: коротка репліка має виглядати коротко,
+   інакше ритм розмови не читається. Верхня межа не 100%, бо бульбашка на всю
+   ширину знову втрачає бік, а бік тут і є підписом. */
+.smn-turn {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 7px;
+}
+.smn-turn--you { align-items: flex-end; }
+.smn-turn--agent { align-items: flex-start; }
 .smn-said {
-  margin: 0 0 6px;
-  padding: 7px 9px;
+  max-width: 85%;
+  width: fit-content;
+  margin: 0;
+  padding: 6px 9px;
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
   background: var(--bg-inset);
   font: 400 12.5px/1.5 var(--font-ui);
   color: var(--ink-2);
+  /* У репліках трапляються селектори й імена класів без пробілів — довші за
+     бульбашку і нерозривні. Без цього вони вилазять за край. */
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.smn-said--first { color: var(--ink); }
-.smn-said--agent { border-color: var(--info-line); background: var(--info-soft); }
-.smn-said__who {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 3px;
-  color: var(--muted);
-  font: 500 10px/1.5 var(--font-ui);
-  font-variant-numeric: tabular-nums;
-  text-transform: lowercase;
+/* Хвіст — підрізаний кут із боку автора. Це і є друга половина підпису:
+   навіть коли обидві бульбашки вузькі й стоять поруч, форма каже, чия чия. */
+.smn-turn--you .smn-said {
+  border-radius: var(--r-md) var(--r-md) 3px var(--r-md);
+  border-color: var(--line-strong);
+  background: var(--bg-hover);
+  color: var(--ink);
 }
-.smn-said--agent .smn-said__who { color: var(--info); }
+.smn-turn--agent .smn-said {
+  border-radius: var(--r-md) var(--r-md) var(--r-md) 3px;
+}
+/* Хроми тут немає навмисно. Синій в оверлеї означає рівно одне — «агент
+   спинився й чекає на тебе», і він уже стоїть на чипі та на маркері. Пофарбувати
+   ним КОЖНУ репліку агента означало б знецінити сигнал: якщо синє все, синє не
+   означає нічого. Бульбашки розводить ґрунт (свої підняті, агентові втоплені)
+   і форма. */
+.smn-when {
+  margin-top: 2px;
+  padding: 0 3px;
+  color: var(--faint);
+  font: 400 9.5px/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── List ────────────────────────────────────────────────────────────────
    Every open note on this page, newest last so the numbering matches the
@@ -1926,11 +2083,15 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
          і на саму зйомку — два виклики розійшлись би, якби між ними щось
          перемалювалось, і заглушка тримала б місце не під той кадр. */
       const subject = gap ? gap.context : el
+      /* Позначка в кадрі — рівно те, у що цілились: сам блок або смуга
+         порожнечі. У режимі блока субʼєкт і позначка збігаються, у режимі
+         проміжку — ні, і саме тому це два різні аргументи. */
+      const mark: Rect = gap ? gap.rect : rectOf(el)
       const frame = shotFrame(subject)
       setShot({ status: 'taking', ratio: frame.w > 0 && frame.h > 0 ? frame.w / frame.h : undefined })
       const run = shotRun.current + 1
       shotRun.current = run
-      shotJob.current = takeShot(subject, host).then(
+      shotJob.current = takeShot(subject, host, mark).then(
         (ready) => {
           /* Чужий номер означає, що чернетки вже немає (скасування, зміна
              роуту, анмаунт) — прев'ю нікому показувати, тож URL відкликається
@@ -2286,7 +2447,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
           </div>
         )}
 
-        <div className="smn-bar">
+        <div className={`smn-bar${aim ? ' smn-bar--aiming' : ''}`}>
           {/* Першою й лише за наявності того, що відкривати — див. showList вище. */}
           {showList && (
             <>
@@ -2485,6 +2646,18 @@ function Composer({
    fix is in, which makes the note the reviewer's to check, and only the check
    ends it. Nothing here writes a status — the three states are read, never set,
    because the agent owns them. */
+/* Одна черга в розмові: бульбашка й час під нею. Роль не підписана словом —
+   її несуть бік і форма (див. CSS), а для скрінрідера вона лишається в
+   `aria-label`, бо «праворуч» на слух не існує. */
+function Turn({ role, at, text }: { role: 'you' | 'agent'; at: string; text: string }) {
+  return (
+    <div className={`smn-turn smn-turn--${role}`} aria-label={role === 'agent' ? 'Agent' : 'You'}>
+      <p className="smn-said">{text}</p>
+      <span className="smn-when">{shortTime(at)}</span>
+    </div>
+  )
+}
+
 function Thread({
   note,
   index,
@@ -2505,6 +2678,14 @@ function Thread({
   const [err, setErr] = useState('')
   const [confirmDel, setConfirmDel] = useState(false)
   const wait = awaitsHuman(note)
+  /* Найновіша репліка внизу, і показувати треба саме її: тред відкривають, щоб
+     побачити, що агент відповів ОСТАННІМ, а не як він починав. Скрол ставиться
+     і на відкритті, і на кожній новій репліці — довжина треда і є подією. */
+  const feed = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = feed.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [note.thread.length])
 
   const send = async () => {
     if (!text.trim() || busy) return
@@ -2546,26 +2727,25 @@ function Thread({
       </div>
       <div className={`smn-target${note.selector ? '' : ' smn-target--none'}`}>
         {note.spacing && <SpacingTarget spacing={note.spacing} />}
-        {note.selector || note.fullPath}
+        {/* Селектор — коли він є; коли ні, лише хвіст шляху, а повний під
+            наведенням. Див. `pathTail`: це якір для агента, не текст для
+            читання, і чотирма рядками зверху він забирав поповер собі. */}
+        {note.selector || (
+          <span className="smn-path" title={note.fullPath}>
+            {pathTail(note.fullPath)}
+          </span>
+        )}
         {note.components.length > 0 && <span className="smn-chain">{note.components.join(' ‹ ')}</span>}
       </div>
 
-      <div className="smn-scroll">
-        <p className="smn-said smn-said--first">
-          <span className="smn-said__who">
-            <span>you</span>
-            <span>{shortTime(note.createdAt)}</span>
-          </span>
-          {note.note}
-        </p>
+      {/* Стрічка розмови. Прокрутка живе тут, а не в поповері: поле відповіді
+          й кнопки під ним мусять лишатись на місці, скільки б реплік не було. */}
+      <div className="smn-scroll" ref={feed}>
+        {/* Сама нота — перша репліка автора, а не окремий жанр: розмова
+            починається з неї, і в стрічці вона стоїть тією ж бульбашкою. */}
+        <Turn role="you" at={note.createdAt} text={note.note} />
         {note.thread.map((m, i) => (
-          <p key={`${m.at}-${i}`} className={`smn-said${m.role === 'agent' ? ' smn-said--agent' : ''}`}>
-            <span className="smn-said__who">
-              <span>{m.role === 'agent' ? 'agent' : 'you'}</span>
-              <span>{shortTime(m.at)}</span>
-            </span>
-            {m.content}
-          </p>
+          <Turn key={`${m.at}-${i}`} role={m.role === 'agent' ? 'agent' : 'you'} at={m.at} text={m.content} />
         ))}
       </div>
 
