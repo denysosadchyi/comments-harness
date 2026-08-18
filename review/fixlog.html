@@ -1238,6 +1238,25 @@
       .pop__cancel:focus-visible, .pop__send:focus-visible { outline: none; box-shadow: var(--ring); }
       .pop__send[disabled] { opacity: .5; cursor: default; }
 
+      /* ── Відповідь агентові прямо з Details ──────────────────────────────
+         Агент, який не зрозумів зауваження, ставить питання в тред ноти —
+         і воно видно тут, у Details, разом з усім іншим, що про цю правку
+         сказали. Досі відповісти звідси не було чим: користувач читав
+         питання на цій сторінці, а йшов відповідати в оверлей на самому
+         екрані застосунку. Саме цей перехід і був причиною, чому ноти з
+         питанням висіли годинами: відповідь коштувала зміни місця.
+
+         Візуально блок не заводить нової мови: та сама `.pop__note`, та сама
+         `.pop__send`, лише власний рядок дій, бо кнопка тут відправляє НЕ те,
+         що Send у підвалі діалогу (там — доробка, тут — репліка в тред).
+         Розділова лінія зверху каже те саме: вище — те, що вже сказано,
+         нижче — твоє слово. */
+      .pop__reply { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+      .pop__reply-head { margin: 0 0 8px; color: var(--muted); font: 500 10.5px/1.5 var(--font-ui); }
+      /* Підвал репліки дзеркалить `.pop__foot`, але живе всередині блоку:
+         помилка саме цієї відправки мусить стояти біля саме цієї кнопки. */
+      .pop__reply-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+
       @media (prefers-reduced-motion: reduce) {
         .dot--redo, .spin { animation: none }
         /* Sheen collapses to the plain resting tint. */
@@ -1394,6 +1413,21 @@
         <h2 class="pop__title" id="popTitle">Send back</h2>
         <p class="pop__sub" id="popSub"></p>
         <div class="pop__body" id="popBody" hidden></div>
+        <!-- Відповідь у тред живої ноти. Показується лише в режимі Details і
+             лише для ноти, яка ще існує на сервері нот, — див. openPop. -->
+        <div class="pop__reply" id="popReply" hidden>
+          <p class="pop__reply-head">Reply to the agent</p>
+          <!-- maxlength = ліміт контракту нот на `content` репліки (4000):
+               ріжемо на вводі, щоб користувач не втрачав набране на 400 від
+               сервера. Сервер усе одно лишається останнім суддею. -->
+          <textarea class="pop__note" id="popReplyNote" rows="3" maxlength="4000"
+            aria-label="Reply to the agent"
+            placeholder="Answer the agent — Ctrl/⌘+Enter to send"></textarea>
+          <div class="pop__reply-foot">
+            <span class="pop__err" id="popReplyErr"></span>
+            <button class="pop__send" id="popReplySend" type="button">Reply</button>
+          </div>
+        </div>
         <textarea class="pop__note" id="popNote" rows="4" maxlength="500"
           aria-label="What is wrong and how it should be"
           placeholder="What is wrong and how it should be"></textarea>
@@ -2656,21 +2690,12 @@
       const pop = $('pop')
       let popKey = ''
 
-      /* Two modes, one dialog: reading what a fix did, and telling it to be
-         redone. They share the same subject line, so splitting them into two
-         components would duplicate more than it separates. */
-      function openPop(key, label, mode) {
-        popKey = key
-        const details = mode === 'info'
-        $('popTitle').textContent = details ? 'What was done' : 'Send back'
-        const row = state.rows.find((r) => r.key === key)
-        $('popSub').innerHTML =
-          `${row && row.num ? `<span class="id">${row.num}</span> ` : ''}${esc(label || '')}`
-        const open = row ? openRw(row) : null
-
-        const body = $('popBody')
-        body.hidden = !details
-        if (details) {
+      /* Тіло режиму Details, зібране окремою функцією, бо його треба
+         перемальовувати БЕЗ перевідкриття діалогу: щойно користувач відповів
+         агентові, репліка мусить стати в тред тут же, на очах. Перевикликати
+         openPop для цього не можна — воно скинуло б поле відповіді й фокус,
+         тобто покарало б за те, що людина відповіла. */
+      function popBodyHtml(row) {
           /* Chronological: what the fix did first, then the thread — each
              iteration is note (why it was rejected) plus, once closed, what
              the redo changed. This dialog is the whole corpus entry in one
@@ -2729,13 +2754,42 @@
                 return parts ? `<dl class="pop__el">${parts}</dl>` : ''
               })()
             : ''
-          body.innerHTML =
+          return (
             elBlock +
             (row && row.did
               ? inline(row.did)
               : talk || elBlock ? '' : '<span class="muted">No description.</span>') +
             talk + thread
-        }
+          )
+      }
+
+      /* Two modes, one dialog: reading what a fix did, and telling it to be
+         redone. They share the same subject line, so splitting them into two
+         components would duplicate more than it separates. */
+      function openPop(key, label, mode) {
+        popKey = key
+        const details = mode === 'info'
+        $('popTitle').textContent = details ? 'What was done' : 'Send back'
+        const row = state.rows.find((r) => r.key === key)
+        $('popSub').innerHTML =
+          `${row && row.num ? `<span class="id">${row.num}</span> ` : ''}${esc(label || '')}`
+        const open = row ? openRw(row) : null
+
+        const body = $('popBody')
+        body.hidden = !details
+        if (details) body.innerHTML = popBodyHtml(row)
+
+        /* Поле відповіді — лише в Details і лише над ЖИВОЮ нотою (`row.live`,
+           тобто рядок приїхав із `GET /notes`). Для архівного рядка з
+           fixlog.md ноти на сервері немає, `PATCH` дав би 404, і показувати
+           поле означало б обіцяти дію, яка не спрацює. Для незадоволення
+           архівним рядком є Send back — інший механізм з іншими наслідками
+           (він відкриває доробку й нову ітерацію), і плутати їх не можна. */
+        const canReply = details && !!(row && row.live)
+        $('popReply').hidden = !canReply
+        $('popReplyNote').value = ''
+        $('popReplyErr').textContent = ''
+
         /* The form only exists in rework mode. Re-opening while an iteration
            is still open pre-fills its note: sending again AMENDS the open
            instruction (the server keeps one open iteration per fix). */
@@ -2745,7 +2799,15 @@
         $('popNote').value = open ? open.note : ''
         $('popErr').textContent = ''
         pop.hidden = false
+        /* Фокус ставиться туди, де від людини ЧЕКАЮТЬ слова, і більше нікуди.
+           У режимі доробки це завжди поле доробки — заради нього діалог і
+           відкрили. У Details навпаки: діалог здебільшого читають, і курсор у
+           полі там був би нав'язуванням. Виняток один — останнє слово в треді
+           за агентом (`askOf`): це буквально зупинена робота, і єдине, чого
+           від цього відкриття хочуть, — відповісти. Тоді фокус у полі
+           економить клік рівно там, де він і так неминучий. */
         if (!details) $('popNote').focus()
+        else if (canReply && row && askOf(row)) $('popReplyNote').focus()
       }
       const closePop = () => { pop.hidden = true; popKey = '' }
 
@@ -2797,6 +2859,66 @@
         } finally {
           btn.disabled = false
         }
+      })
+
+      /* ── Відповідь агентові в тред ноти ────────────────────────────────
+         Той самий шлях, яким відповідає оверлей: `PATCH /notes/:id` з
+         `{"reply":{"role":"human","content":"…"}}` (docs/contract.md). Ніякої
+         власної ручки під рев'ю-сторінку немає й не треба — тред мусить
+         виглядати однаково, з якого б боку в нього не писали.
+
+         Кнопки «запусти агента» тут теж свідомо немає: сторож будить ноту
+         сам, побачивши в треді свіже `role:"human"` — це його штатний
+         сигнал, а не побічний ефект. Дублювати його кнопкою означало б дати
+         два способи зробити те саме, з яких другий іноді робить це двічі. */
+      async function sendReply() {
+        const content = $('popReplyNote').value.trim()
+        /* Порожню репліку не шлемо: сервер прийняв би її й вставив у тред
+           порожній рядок, а сторож розбудив би агента ні з чим. */
+        if (!content) { $('popReplyErr').textContent = 'Write an answer first'; return }
+        const row = state.rows.find((r) => r.key === popKey)
+        const btn = $('popReplySend')
+        btn.disabled = true
+        $('popReplyErr').textContent = ''
+        try {
+          const r = await fetch(`${ANN}/notes/${encodeURIComponent(popKey)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reply: { role: 'human', content } }),
+          })
+          /* Сервер віддає ноту цілком — беремо тред звідти, а не дописуємо
+             свій рядок локально. Так у діалозі стоїть те, що НАСПРАВДІ лежить
+             на сервері (зі штампом `at` сервера), і немає другої, оптимістично
+             намальованої правди, яка розійдеться з нею на наступному опитуванні.
+
+             404 тут — не «сервер лежить», а «ноти вже немає»: її міг закрити
+             сторож, поки діалог був відкритий. Кажемо це словами; мовчазний
+             успіх на загубленій відповіді — найгірший із можливих результатів. */
+          if (r.status === 404) throw new Error('the note is gone — it was already closed')
+          const data = await r.json().catch(() => ({}))
+          if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status)
+          if (row) {
+            row.thread = Array.isArray(data.thread) ? data.thread : row.thread
+            /* Тред виріс — перемальовуємо тіло діалогу на місці, поле
+               чистимо. Діалог лишається відкритим: відповідь часто не одна,
+               і закривати його означало б змушувати відкривати знову. */
+            $('popBody').innerHTML = popBodyHtml(row)
+          }
+          $('popReplyNote').value = ''
+          /* Таблиця теж мусить це побачити: рядок перестав бути «needs you»,
+             бо останнє слово тепер за людиною. */
+          render()
+        } catch (err) {
+          $('popReplyErr').textContent = 'Reply failed: ' + err.message
+        } finally {
+          btn.disabled = false
+        }
+      }
+      $('popReplySend').addEventListener('click', sendReply)
+      /* Ctrl/⌘+Enter — та сама звичка, що в поповері оверлея. Enter сам по
+         собі лишається переносом рядка: репліка часто багаторядкова. */
+      $('popReplyNote').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendReply() }
       })
 
       /* ── Живий фавікон ─────────────────────────────────────────────────
@@ -2995,6 +3117,15 @@
                колонки одна на всю таблицю. Не взята нота лишається з
                прочерком — там справді ще нікого немає. */
             laneRaw: st === 'new' ? '' : 'claude',
+            /* Єдина ознака «нота ще жива», і вона про ПОХОДЖЕННЯ рядка, а не
+               про його статус. Рядок, зібраний тут, приїхав із `GET /notes` —
+               отже нота існує у сторі, і `PATCH /notes/:id` на неї пройде.
+               Рядок із `fixlog.md` (parseDone) цього поля не має: там id веде
+               в теку історії `data/fixes/<id>/`, ноти за ним давно немає, і
+               той самий PATCH віддав би 404. Тому поле відповіді вмикає саме
+               це, а не `stOf`: ефективний статус — похідна від треду й
+               доробок, він міняється під ногами, а походження рядка — ні. */
+            live: true,
             did: '', ts: created,
             thread: Array.isArray(a.thread) ? a.thread : [],
             /* Контекст елемента, на якому поставили ноту. Тримається сирим
@@ -3117,7 +3248,11 @@
         const items = []
         /* Перший у смужці з тієї ж причини, з якої перший у сортуванні: це
            єдина робота, розблокувати яку може тільки той, хто дивиться. */
-        if (nAsk) items.push(['ask', nAsk, `needs you <span class="tally__hint">— answer in the page overlay</span>`])
+        if (nAsk) items.push(['ask', nAsk, /* Підказка каже «open Details», а не «сходи в оверлей»: відповісти
+             тепер можна прямо тут, у діалозі рядка, і посилати читача на інший
+             екран було б брехнею — саме той перехід і був причиною, чому такі
+             ноти висіли. */
+          `needs you <span class="tally__hint">— answer in Details</span>`])
         items.push(
           ['new', nNewShown, 'new'],
           ['wip', nWipShown, 'in progress'],
