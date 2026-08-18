@@ -303,6 +303,11 @@ const staticDir = STATIC_CANDIDATES.map((d) => join(projectRoot, d)).find((d) =>
 
 const links = [
   ['fixlog.html', join(HARNESS, 'review', 'fixlog.html')],
+  /* Той самий модуль, що вбудовується в оверлей, тільки сторінка вантажить
+     його вже зібраним браузером — тож він мусить віддаватись зі статики
+     поруч із нею. Без цього симлінка сторінка не знає жодного порту й
+     чесно про це каже. */
+  ['harness-endpoints.js', join(HARNESS, 'client', 'endpoints.js')],
   ['fixlog.md', join(DATA, 'fixlog.md')],
   ['fixlog-ratings.json', join(DATA, 'fixlog-ratings.json')],
 ]
@@ -334,6 +339,35 @@ if (flag('no-symlinks')) {
     }
     symlinkSync(src, dst)
     ok(`симлінк ${relative(projectRoot, dst)}`)
+  }
+
+  /* Підказка про НЕстандартні порти. Браузерні клієнти знають рівно один
+     порт наперед — дефолтний (`client/endpoints.js`), бо сторінку віддає
+     дев-сервер проєкту, який про harness не знає нічого. Якщо порти в конфізі
+     інші, єдиний спосіб сказати це браузеру без правки файлів руками — файл
+     із того ж origin, що й сама сторінка.
+
+     Пишеться РІВНО за потреби: інсталяція на дефолтах не має лишати в проєкті
+     файлів, які потім комусь треба гітігнорити. Порти назад на дефолтні —
+     файл прибирається, інакше він пережив би зміну й брехав би клієнтам. */
+  const portsFile = join(staticDir, 'harness-ports.json')
+  const custom =
+    cfg.notesPort !== DEFAULTS.notesPort || cfg.ratingsPort !== DEFAULTS.ratingsPort
+  if (custom) {
+    const body = `${JSON.stringify(
+      { notesPort: cfg.notesPort, ratingsPort: cfg.ratingsPort },
+      null,
+      2,
+    )}\n`
+    const prev = existsSync(portsFile) ? readFileSync(portsFile, 'utf8') : null
+    if (prev === body) skip(`${relative(projectRoot, portsFile)} без змін`)
+    else {
+      writeFileSync(portsFile, body)
+      ok(`${relative(projectRoot, portsFile)} — порти для браузерних клієнтів`)
+    }
+  } else if (existsSync(portsFile) && !isLink(portsFile)) {
+    unlinkSync(portsFile)
+    ok(`прибрано ${relative(projectRoot, portsFile)} — порти дефолтні`)
   }
 }
 
@@ -384,16 +418,22 @@ if (staticDir && !flag('no-symlinks')) {
   console.log(`       http://<хост>:<порт дев-сервера>/fixlog.html`)
 }
 console.log('')
-console.log('3. ПОРТИ В ОВЕРЛЕЇ. Оверлей і рев\'ю-сторінка виконуються в браузері')
-console.log(`   й конфіг прочитати не можуть — порти ${cfg.notesPort}/${cfg.ratingsPort} зашиті в`)
-console.log('   `overlay/annotator.tsx` і `review/fixlog.html`. Якщо ти міняв')
-console.log('   порти в harness.config.json — поміняй і там.')
-if (cfg.notesPort !== DEFAULTS.notesPort || cfg.ratingsPort !== DEFAULTS.ratingsPort) {
-  console.log('   ↑ ТИ ЇХ ЗМІНИВ. Це зараз твій наступний крок.')
-}
-console.log('')
-console.log('4. ФАЄРВОЛ, якщо дев-сервер слухає 0.0.0.0 і рев\'ю відкривають з')
+console.log('3. ФАЄРВОЛ, якщо дев-сервер слухає 0.0.0.0 і рев\'ю відкривають з')
 console.log(`   іншої машини: відкрий ${cfg.notesPort} і ${cfg.ratingsPort} рівно на свою LAN-підмережу.`)
+
+/* Раніше тут стояв четвертий пункт — «порти зашиті в двох браузерних файлах,
+   поміняв у конфізі, поміняй і там». Його більше немає: оверлей і сторінка
+   беруть порти з `GET /config` сервера нот, а нестандартний порт нот — із
+   `harness-ports.json`, який цей скрипт щойно поклав у статику. Лишається
+   рівно одне, про що варто сказати: файл оновлює setup, а не сервер. */
+if (cfg.notesPort !== DEFAULTS.notesPort || cfg.ratingsPort !== DEFAULTS.ratingsPort) {
+  console.log('')
+  console.log(`Порти нестандартні (${cfg.notesPort} / ${cfg.ratingsPort}), і в браузерних`)
+  console.log("клієнтах правити нічого не треба: оверлей і рев'ю-сторінка беруть їх")
+  console.log('самі. Але міняти порти пізніше — тільки через цей скрипт (або запусти')
+  console.log('його ще раз після правки harness.config.json), бо статичний')
+  console.log('harness-ports.json оновлює саме він.')
+}
 
 if (manual.length) {
   console.log('\n───────────────────────────────────────────────────────────────')

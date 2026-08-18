@@ -54,10 +54,10 @@ import config from '../config.mjs'
 
 /* ── Configuration ────────────────────────────────────────────────────────
    Port comes from `harness.config.json` (see `config.mjs`), but only for the
-   processes that can read a file. The review page hardcodes 4748 as well
-   (`http://${location.hostname}:4748`) and runs in a browser, where there is
-   no config to read — so a changed port has to be changed there too, and a
-   value only one of the two knows is a silent disagreement. */
+   processes that can read a file. The review page cannot — it runs in a
+   browser — so it asks the NOTES server for this port over `GET /config`
+   (see `client/endpoints.js`). Nothing here has to be told about that: this
+   server and that endpoint read the same `config.mjs`. */
 const PORT = config.ratingsPort
 const HOST = config.host
 /* Resolved from this file's own location, never from cwd — see the twin

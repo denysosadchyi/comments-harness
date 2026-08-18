@@ -1418,8 +1418,17 @@
          ANOTHER machine, where "localhost" would mean that machine's own
          loopback and every fetch would fail.
          ──────────────────────────────────────────────────────────────────── */
-      const ANN = `http://${location.hostname}:4747`   // annotations (open work)
-      const RATE = `http://${location.hostname}:4748`  // ratings (verdicts)
+      /* Порти НЕ зашиті. Обидві бази приїжджають із `harness-endpoints.js` —
+         єдиного місця, спільного з оверлеєм (сторінка й оверлей однаково
+         виконуються в браузері й `config.mjs` прочитати не можуть). Модуль
+         віддається зі статики симлінком, який кладе `setup.mjs`, поруч із
+         самою сторінкою; порядок пошуку портів — у коментарі того файлу.
+
+         До відповіді бази порожні, і `load()` до цього моменту не стартує
+         (див. `boot()` у кінці файлу): усі запити тут ходять на ANN/RATE, і
+         запуск циклу раніше означав би пачку запитів у порожній хост. */
+      let ANN = ''   // annotations (open work)
+      let RATE = ''  // ratings (verdicts) — '' поки порт невідомий
 
       const $ = (id) => document.getElementById(id)
 
@@ -1576,7 +1585,7 @@
            різав рядок посеред значення — усі колонки після місця екранування
            з'їжджали на одну. 13 із 287 архівних рядків через це показували
            чужий текст в «Агент»/«Деталі» і сміття замість `ID`, а Send back
-           на такому рядку летів на :4748 з невалідним ключем і діставав 400.
+           на такому рядку летів на сервер вердиктів з невалідним ключем і діставав 400.
            Тому ріжемо посимвольно: роздільник — лише НЕекранований `|`, а зі
            значення екранування знімається. */
         const cells = (l) => {
@@ -1695,7 +1704,7 @@
       const SVG = {
         /* Pause/play пішли разом із паузою: контракт нот знає pending,
            working і resolved, і жоден із переходів не є «призупинити».
-           `redo` — одна дія одного жанру: send-back правки через :4748.
+           `redo` — одна дія одного жанру: send-back правки через сервер вердиктів.
            Живу ноту цією кнопкою в чергу не повертають — `rwCell` віддає її
            лише рядкам, які вже не `new`/`ask`, і летить вона на /rework. */
         check: '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>',
@@ -2746,6 +2755,10 @@
         const note = $('popNote').value.trim()
         if (!note) { $('popErr').textContent = 'Say what is wrong'; return }
         const btn = $('popSend')
+        /* Без відомого порту вердиктів слати нікуди. Кажемо це в тому ж
+           місці, де показуємо решту помилок форми, а не мовчки нікуди не
+           йдемо: Send back — це слова користувача, які не можна загубити. */
+        if (!RATE) { $('popErr').textContent = 'Ratings server unknown — is the notes server up?'; return }
         btn.disabled = true
         try {
           const r = await fetch(`${RATE}/rework`, {
@@ -2893,7 +2906,11 @@
            початку кожного циклу, вона не встигала показатись жодного разу:
            записалась о 10-й секунді, стерлась на 10-й з половиною. Тепер вона
            живе, доки запит не пройде вдало, — і саме успіх її й знімає. */
-        getJSON(`${RATE}/ratings`)
+        /* Порт вердиктів приходить від сервера нот; той лежав — порту немає,
+           і йти нікуди. Це така сама проблема, як недоступний сервер, тож і
+           показується так само, смужкою, а не тишею. */
+        if (!RATE) state.ratingsErr = 'port unknown — the notes server did not answer /config'
+        else getJSON(`${RATE}/ratings`)
           .then((v) => {
             state.ratingsErr = ''
             /* Re-render only when the verdicts actually changed — this fires
@@ -3053,7 +3070,7 @@
         if (fatalMsg) problems.push(fatalMsg)
         if (open.e) problems.push(`Notes server (${ANN}) — ${open.e}`)
         if (md.e) problems.push(`fixlog.md — ${md.e}`)
-        if (state.ratingsErr) problems.push(`Ratings (${RATE}) — ${state.ratingsErr}`)
+        if (state.ratingsErr) problems.push(`Ratings (${RATE || 'address unknown'}) — ${state.ratingsErr}`)
         /* Same-string guard: these repaint every cycle, and an idle strip
            must not be rebuilt (and reflowed) for identical content. */
         const warnHtml = problems.length
@@ -3126,6 +3143,9 @@
       let inFlight = false
       const guardedLoad = async () => {
         if (inFlight) return
+        /* Адреси ще не приїхали (перший тік міг випередити boot) — пропускаємо
+           цикл, а не ходимо в порожній хост. */
+        if (!ANN) return
         if (!pop.hidden || !dr.hidden) return
         /* Ховану вкладку не опитуємо — окрім випадку, коли щось у роботі.
            Причина в іконці: крутілку видно саме тоді, коли на сторінку не
@@ -3145,7 +3165,27 @@
         if (!document.hidden) guardedLoad()
       })
 
-      load()
+      /* Спершу адреси, потім дані. Модуль лежить у статиці поруч зі сторінкою
+         (симлінк від `setup.mjs`), тому шлях відносний до неї й абсолютний за
+         формою: сторінка завжди віддається з кореня статики.
+
+         Немає модуля — це не «сервер лежить», а недороблена інсталяція, і
+         сказати про це треба прямо: без адрес сторінка не покаже нічого, і
+         мовчазна порожня таблиця відправила б читача шукати проблему не там.
+         Сама сторінка при цьому не падає — рендериться, показує смужку. */
+      async function boot() {
+        try {
+          const mod = await import('./harness-endpoints.js')
+          const eps = await mod.resolveEndpoints()
+          ANN = eps.notes
+          RATE = eps.ratings
+        } catch (err) {
+          fatal(`harness-endpoints.js not loaded (${err && err.message}) — re-run comments-harness/setup.mjs`)
+          return
+        }
+        await load()
+      }
+      boot()
     </script>
   </body>
 </html>

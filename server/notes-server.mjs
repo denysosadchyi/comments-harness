@@ -539,6 +539,22 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  /* The two browser clients — the overlay and the review page — cannot read
+     `config.mjs`: they run in a browser, on a page served by the project's own
+     dev server. Before this endpoint existed they carried the ports as
+     literals, so changing a port in the config broke the tool silently.
+
+     WHITELIST, never the config object. This is an unauthenticated endpoint on
+     a server bound to 0.0.0.0 in a LAN: filesystem paths, the executor command
+     and the unit prefix are all things the config knows and nobody outside the
+     machine has any business reading. Only the two port numbers leave here,
+     and `notesPort` is echoed back on purpose — a client that reached this
+     server through a proxy or a forwarded port learns the real one. */
+  if (req.method === 'GET' && path === '/config') {
+    send(res, 200, { notesPort: config.notesPort, ratingsPort: config.ratingsPort })
+    return
+  }
+
   if (req.method === 'GET' && path === '/notes') {
     const status = params.get('status')
     if (status !== null && !STATUSES.includes(status)) {

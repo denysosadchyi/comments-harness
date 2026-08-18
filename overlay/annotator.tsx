@@ -37,8 +37,10 @@
       localhost. The dev server binds 0.0.0.0 (vite.config.ts sets
       `host: true`) and the review is normally opened from another machine on
       the LAN, where "localhost" means THAT machine's loopback and the POST
-      fails with "Failed to fetch". Port 4747 is open to 192.168.1.0/24 in
-      ufw for the same reason.
+      fails with "Failed to fetch". The notes port is open to 192.168.1.0/24
+      in ufw for the same reason. The port itself is not hardcoded here
+      either — it comes from `client/endpoints.js`, the one place the two
+      browser clients share (they cannot read `config.mjs`; see that file).
 
    3. Everything renders into a SHADOW ROOT. This repo runs three CSS systems
       at once, two of them global and unlayered, and this file needs tokens
@@ -57,6 +59,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
+import { DEFAULT_NOTES_PORT, resolveEndpoints } from '../client/endpoints.js'
 
 /* ── Contract types ───────────────────────────────────────────────────────
    Transcribed from notes-contract.md. Fields that are not in the contract are
@@ -1298,7 +1301,23 @@ export default function DevAnnotator() {
 }
 
 function Overlay({ pathname, search }: { pathname: string; search: string }) {
-  const endpoint = useMemo(() => `http://${location.hostname}:4747`, [])
+  /* Порт нот більше не літерал: дефолт і весь порядок його пошуку живуть в
+     одному місці на двох браузерних клієнтів — `../client/endpoints.js`.
+     Стартуємо з дефолту (це рівно те, що робилось досі, тож інсталяція «з
+     коробки» працює з першого кадру), а якщо в проєкті лежить підказка про
+     нестандартні порти — перемикаємось на неї, щойно вона приїде. */
+  const [endpoint, setEndpoint] = useState(
+    () => `http://${location.hostname}:${DEFAULT_NOTES_PORT}`,
+  )
+  useEffect(() => {
+    let alive = true
+    void resolveEndpoints().then((e) => {
+      if (alive) setEndpoint((prev) => (e.notes === prev ? prev : e.notes))
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [notes, setNotes] = useState<Note[]>([])

@@ -32,6 +32,7 @@ Six processes and files, zero npm dependencies, two HTTP ports.
 | Watchdog | `watchdog/dispatcher.mjs` | waits on the note long-poll and on the rework queue, and launches an executor (`claude -p`) per task |
 | Review page | `review/fixlog.html` | table of open and closed work, verdicts, rework history |
 | Verdicts server | `server/fixlog-server.mjs` | :4748, verdicts and rework iterations, deliberately separate from notes |
+| Browser config | `client/endpoints.js` | the one place the two browser clients get the server ports from — the sole default, plus the lookup order |
 
 Lifecycle: a note is `pending` when written, `working` when an agent claims it,
 `resolved` when the edit is made. The watchdog then writes a fix folder under
@@ -123,12 +124,16 @@ environment variable. The full field list with defaults and reasoning is in
 - **Ports 4747 and 4748**, both bound to `0.0.0.0` by default so the review
   page opens from a phone or another machine. If your dev server is exposed on
   the LAN, open those two ports to the LAN subnet only.
-- **The browser-side files still hard-code the ports.** The overlay and the
-  review page run in a browser and cannot read `harness.config.json`, so
-  `4747`/`4748` are literals in `overlay/annotator.tsx` and
-  `review/fixlog.html`. Change the port in the config and you must change it in
-  those two files too; `setup.mjs` reminds you at the end. As of this writing
-  that is being addressed, but the literals are what is in the code today.
+- **The browser side asks for the ports; it does not know them.** The overlay
+  and the review page cannot read `harness.config.json`, so they get the ports
+  at runtime: `GET <notes>/config` returns `{notesPort, ratingsPort}` (a
+  whitelist — nothing else from the config leaves the process), and a
+  non-default notes port is announced by `harness-ports.json`, a static file
+  `setup.mjs` writes next to the review page when, and only when, your ports
+  differ from the defaults. The single default, `DEFAULT_NOTES_PORT` in
+  `client/endpoints.js`, exists because the first request has to go somewhere:
+  the page is served by your dev server, which knows nothing about the harness.
+  Change a port in one place — the config — and re-run `setup.mjs`.
 - **Fix history is append-mostly and local.** `data/` is state, not code, and
   it is not designed to be shared or merged between machines.
 
