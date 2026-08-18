@@ -1088,6 +1088,101 @@
          is a white flash into a white page, not a dark hole into a white one. */
       .dr__frame { flex: 1 1 auto; width: 100%; border: 0; background: oklch(1 0 0); }
 
+      /* ── Кадр проти живої сторінки ────────────────────────────────────────
+         Дві правди про той самий екран, і жодна не витісняє іншу. Кадр —
+         єдине, що відповідає на питання «а що там було, коли це писали»:
+         через конвеєр іде по три сотні правок на день, і живий iframe на
+         вчорашньому рядку показує вже інший застосунок. Жива сторінка —
+         єдине, що відповідає на «а зараз як», а шухляду відкривають і заради
+         цього теж, бо тут-таки стоїть кнопка Send back.
+         Тому перемикач, а не заміна: дефолт — кадр (питання рядка історичне),
+         але другий режим на відстані одного кліка й ніде не схований. */
+      .dr__view {
+        display: flex;
+        flex: 0 0 auto;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+        overflow: hidden;
+      }
+      .dr__view button {
+        padding: 5px 10px;
+        border: 0;
+        background: none;
+        color: var(--muted);
+        font: 500 11px/1 var(--font-ui);
+        cursor: pointer;
+        transition: color var(--dur-fast) var(--ease-out),
+                    background-color var(--dur-fast) var(--ease-out);
+      }
+      .dr__view button + button { border-left: 1px solid var(--line); }
+      .dr__view button:hover:not([disabled]) { color: var(--ink); background: var(--bg-hover); }
+      .dr__view button:focus-visible { outline: none; box-shadow: var(--ring); }
+      .dr__view button[aria-pressed='true'] { color: var(--ink); background: var(--bg-hover); }
+      .dr__view button[disabled] { opacity: .35; cursor: default; }
+
+      .dr__stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+      /* Смужка «що ти зараз бачиш». Вона тут не декоративна: непорозуміння,
+         заради якого все це робиться, звучало як «в шухляді не те, що я
+         анотував», і виникло рівно з того, що кадр і жива сторінка виглядали
+         однаково. Тож режим підписаний завжди, обидва. Живий стан носить
+         колір-попередження, кадр — приглушений: сумніватись треба саме в
+         живому, він єдиний міняється під ногами. */
+      .dr__mode {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        padding: 6px 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font: 500 11px/1.4 var(--font-ui);
+      }
+      .dr__mode b { color: var(--ink-2); font-weight: 600; }
+      .dr__mode--live { background: var(--danger-soft); color: var(--ink-2); }
+      .dr__mode--live b { color: var(--danger); }
+
+      /* Кадр гортається, а не вписується: він знятий у ретині й ширший за
+         панель, а вписаний у висоту він став би нечитабельним прямокутником,
+         на якому обведеного елемента вже не розібрати. Ширина обмежена
+         панеллю, висота — власна. */
+      .dr__shot {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding: 16px;
+        background: var(--bg-inset);
+        text-align: center;
+      }
+      .dr__shot img { max-width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); }
+
+      /* Кадру немає — так і сказано. Порожнє місце читалось би як «сторінка
+         зламалась», а це нормальний випадок: 22 теки з кадром на 308 правок,
+         бо знімати оверлей навчився пізніше за сам конвеєр. */
+      .dr__none {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        color: var(--muted);
+        font: 400 12.5px/1.6 var(--font-ui);
+        text-align: center;
+      }
+      .dr__stage > [hidden] { display: none; }
+
+      /* Той самий кадр у діалозі Details, під контекстом елемента: там
+         перелічено тег, селектор і компоненти — тобто елемент описано
+         словами, — а кадр показує його ж обведеним, і це найдешевший спосіб
+         впізнати, про що взагалі мова. */
+      .pop__shot { margin: 10px 0 0; }
+      .pop__shot img {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: var(--r-sm);
+      }
+      .pop__shot figcaption { margin-top: 5px; color: var(--faint); font: 500 10.5px/1.4 var(--font-ui); }
+
       /* ── Dialog ───────────────────────────────────────────────────────────
          Two modes, one box: reading what a fix did, and telling it to be done
          again. A note here is not a comment on a finished thing — it is an
@@ -1397,12 +1492,23 @@
             <button type="button" class="icon-btn redo" id="drRedo"
               title="Send back" aria-label="Send back"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z"/></g></svg></button>
           </div>
+          <div class="dr__view" id="drView" role="group" aria-label="What to show">
+            <button type="button" id="drViewShot" aria-pressed="true"
+              title="The screenshot taken when the note was written">Snapshot</button>
+            <button type="button" id="drViewLive" aria-pressed="false"
+              title="The app as it is right now">Live</button>
+          </div>
           <div class="dr__actions">
             <a class="dr__open" id="drOpen" target="_blank" rel="noopener">Open ↗</a>
             <button class="dr__x" id="drClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M14.5 9.50002L9.5 14.5M9.49998 9.5L14.5 14.5"/></g></svg></button>
           </div>
         </header>
-        <iframe class="dr__frame" id="drFrame" title="Fix screen"></iframe>
+        <div class="dr__stage">
+          <p class="dr__mode" id="drMode"></p>
+          <div class="dr__shot" id="drShotWrap" hidden><img id="drShot" alt="Screenshot taken when the note was written"></div>
+          <p class="dr__none" id="drNone" hidden></p>
+          <iframe class="dr__frame" id="drFrame" title="Fix screen" hidden></iframe>
+        </div>
       </aside>
     </div>
 
@@ -2483,6 +2589,89 @@
         return path + (path.includes('?') ? '&' : '?') + 'smn-frame=review' + (hash ? '#' + hash : '')
       }
 
+      /* ── Звідки брати кадр ────────────────────────────────────────────────
+         Кадр живе у двох місцях, і місце залежить від того, жива нота чи вже
+         закрита. Поки нота у сторі — файл лежить у `data/shots/`, і сама нота
+         несе шлях. Щойно сторож її закрив — файл переїхав у теку правки, а
+         поля з ним ніде немає: рядок приїхав із `fixlog.md`, де є тільки id.
+         Тому для закритого рядка URL будується наосліп, а існування файлу
+         з'ясовує сам браузер через `onerror` — 22 теки з кадром на 308 правок,
+         і питати сервер наперед про кожну означало б запит на кожен рядок. */
+      const shotUrl = (row) => {
+        if (!row || !row.key || row.noShot) return ''
+        if (row.live) return row.shot ? `${ANN}/${row.shot}` : ''
+        return `${ANN}/fixes/${encodeURIComponent(row.key)}/shot.png`
+      }
+
+      /* Стан шухляди тримається тут, а не перечитується з DOM: перемикач
+         режиму мусить знати роут, пін і рядок, з якими шухляду відкрили, а
+         відновлювати їх із заголовка було б другим носієм тих самих даних. */
+      let drRoute = ''
+      let drPin = null
+      let drRow = null
+      let drMode = 'shot'
+
+      /* Один вимикач на обидва режими. Кадр і жива сторінка ніколи не видні
+         одночасно — це не два погляди на одне, а два різні моменти часу, і
+         показані поруч вони б знову злилися в «щось про цей екран». */
+      function showMode(mode) {
+        const url = shotUrl(drRow)
+        /* Кадру нема чому взятися — кнопку глушимо, а не даємо натиснути й
+           отримати порожнечу. */
+        $('drViewShot').disabled = !url
+        if (mode === 'shot' && !url) mode = 'none'
+        drMode = mode
+
+        const live = mode === 'live'
+        $('drViewShot').setAttribute('aria-pressed', String(mode === 'shot'))
+        $('drViewLive').setAttribute('aria-pressed', String(live))
+
+        const frame = $('drFrame')
+        const wrap = $('drShotWrap')
+        const none = $('drNone')
+        wrap.hidden = mode !== 'shot'
+        none.hidden = mode !== 'none'
+        frame.hidden = !live
+
+        if (mode === 'shot') {
+          const img = $('drShot')
+          if (img.src !== url) img.src = url
+        }
+        if (mode === 'none') {
+          none.textContent = drRow && drRow.live
+            ? 'No snapshot for this note — the capture did not succeed. Switch to Live to see the screen as it is now.'
+            : 'No snapshot for this fix — it was closed before the overlay started saving screenshots, or the capture failed. Switch to Live to see the screen as it is now.'
+        }
+
+        if (live) {
+          /* Кадр iframe заряджається ЛИШЕ коли його справді просять: інакше
+             застосунок крутився б за кадром на кожному відкритті шухляди —
+             зі своїми таймерами й запитами — заради вкладки, яку ніхто не
+             відкрив. */
+          const src = frameSrc(drRoute)
+          if (!frame.src || frame.src === 'about:blank' || frame.dataset.route !== drRoute) {
+            frame.dataset.route = drRoute
+            frame.onload = () => drPin && dropPin(frame, drPin)
+            frame.src = src
+          }
+        } else if (frame.src && frame.src !== 'about:blank') {
+          /* Пішли з живого режиму — глушимо застосунок там же, де й на
+             закритті шухляди. */
+          frame.src = 'about:blank'
+          frame.dataset.route = ''
+        }
+
+        const strip = $('drMode')
+        strip.classList.toggle('dr__mode--live', live)
+        strip.innerHTML = live
+          ? `<b>Live app</b> — today's state of ${esc(drRoute)}, not the screen this note was written about.`
+          : mode === 'shot'
+            ? `<b>Snapshot</b> — ${esc(drRoute)} as it looked when the note was written${
+                drRow && drRow.time ? ' · ' + esc(drRow.time) : ''
+              }.`
+            : `<b>No snapshot</b> — nothing was saved for this fix.`
+      }
+
       function openDrawer(route, pin, key, row) {
         if (!route || route === '—') return
         /* The name is the request itself — what was asked for is what
@@ -2508,12 +2697,35 @@
         /* «Відкрити» веде в застосунок як є — там оверлей потрібен, і саме
            там анотують. Марковану адресу отримує ЛИШЕ кадр шухляди. */
         $('drOpen').href = route
-        const f = $('drFrame')
-        f.onload = () => pin && dropPin(f, pin)
-        f.src = frameSrc(route)
+        drRoute = route
+        drPin = pin
+        drRow = row
+        /* Дефолт — кадр, і це не смак. Рядок, який відкривають у шухляді, —
+           запис про минуле; питання до нього «як воно виглядало, коли про це
+           писали», і відповідає на нього тільки кадр. Живий екран лишається
+           одним кліком поруч, бо друге питання — «а полагодили?» — теж
+           справжнє, просто воно друге. Кадру немає → чесний напис про це, а
+           не мовчазний підмін на сьогоднішній екран: саме така підміна і була
+           дефектом. */
+        showMode(shotUrl(row) ? 'shot' : row ? 'none' : 'live')
         dr.hidden = false
         document.body.style.overflow = 'hidden'
       }
+
+      $('drViewShot').addEventListener('click', () => showMode('shot'))
+      $('drViewLive').addEventListener('click', () => showMode('live'))
+      /* Файл могло не бути (стара тека) або сервер нот лежить. Мовчки
+         перекидати на живий екран не можна — це рівно те непорозуміння, з
+         якого все почалось. */
+      $('drShot').addEventListener('error', () => {
+        if (drMode !== 'shot') return
+        /* Позначка живе на рядку, а не в локальній змінній: доки цей об'єкт
+           рядка живий, повторне відкриття тієї ж правки вже не б'є в сервер
+           по файл, якого там немає. */
+        if (drRow) drRow.noShot = true
+        $('drShot').removeAttribute('src')
+        showMode('none')
+      })
 
       /* The drawer and the app are the same origin, so the pin goes INTO the
          iframe's document rather than floating over it — that way it scrolls
@@ -2531,6 +2743,12 @@
         /* Blank the frame: otherwise the app keeps running behind the scrim,
            with its own timers, fetches and annotation toolbar alive. */
         $('drFrame').src = 'about:blank'
+        $('drFrame').dataset.route = ''
+        /* І кадр теж: інакше наступне відкриття встигає блимнути попереднім
+           знімком, поки вантажиться свій — тобто рівно тим «не тим екраном»,
+           від якого цей режим і рятує. */
+        $('drShot').removeAttribute('src')
+        drRoute = ''; drPin = null; drRow = null
         document.body.style.overflow = ''
       }
 
@@ -2754,8 +2972,25 @@
                 return parts ? `<dl class="pop__el">${parts}</dl>` : ''
               })()
             : ''
+          /* Кадр — продовження цього ж блока, а не окрема секція: вище
+             елемент описано словами (тег, селектор, ланцюг компонентів), і
+             кадр показує його ж обведеним. Це буквально те, що бачив
+             користувач у мить кліку, і найдешевший спосіб зрозуміти, про що
+             мова, — швидший за читання селектора.
+
+             Помилку завантаження ловимо інлайновим `onerror`: рядок міг бути
+             закритий до того, як оверлей навчився знімати, і тоді замість
+             битої іконки має лишитись чесний рядок тексту. */
+          const su = shotUrl(row)
+          const shotBlock = su
+            ? `<figure class="pop__shot">
+                 <img src="${esc(su)}" alt="Screenshot taken when the note was written"
+                   onerror="this.closest('.pop__shot').innerHTML='&lt;figcaption&gt;No snapshot saved for this fix.&lt;/figcaption&gt;'">
+                 <figcaption>Snapshot — the screen when the note was written</figcaption>
+               </figure>`
+            : ''
           return (
-            elBlock +
+            elBlock + shotBlock +
             (row && row.did
               ? inline(row.did)
               : talk || elBlock ? '' : '<span class="muted">No description.</span>') +
@@ -3126,6 +3361,10 @@
                це, а не `stOf`: ефективний статус — похідна від треду й
                доробок, він міняється під ногами, а походження рядка — ні. */
             live: true,
+            /* Шлях до кадру, як його віддає контракт нот: `shots/<id>.png`
+               відносно `data/`. Порожньо — знімок не вдався; кадр ніколи не
+               блокує ноту, тож це нормальний випадок, а не помилка. */
+            shot: a.shot || '',
             did: '', ts: created,
             thread: Array.isArray(a.thread) ? a.thread : [],
             /* Контекст елемента, на якому поставили ноту. Тримається сирим

@@ -103,6 +103,14 @@ const FILE = join(HARNESS_ROOT, 'data', 'fixlog-notes.json')
    every request and a few hundred kilobytes of base64 per note would make the
    flat file unusable. The note carries only the relative path. */
 const SHOTS_DIR = join(HARNESS_ROOT, 'data', 'shots')
+/* Куди кадр переїжджає ПІСЛЯ закриття ноти. Сторож, дописавши рядок в індекс,
+   переносить `data/shots/<id>.png` у теку правки `data/fixes/<id>/shot.png`
+   разом із текстом ноти — тека правки і є архівом одного зауваження. Для
+   сервера це друга, доступна лише на читання, домівка тих самих файлів: сам
+   він сюди нічого не пише, але без ендпоінта на неї кадр закритої правки
+   існує на диску й недосяжний з рев'ю-сторінки, а та тоді змушена показувати
+   замість минулого сьогоднішній живий екран. */
+const FIXES_DIR = join(HARNESS_ROOT, 'data', 'fixes')
 
 /* Guardrails on untrusted input, straight from the contract's limits table.
    The reviewer is trusted, a stray script on the LAN is not, and this process
@@ -881,6 +889,57 @@ const server = createServer(async (req, res) => {
       /* A shot is replaced in place when the same note is re-captured, so a
          cached copy would show the reviewer the previous defect. */
       'Cache-Control': 'no-store',
+    })
+    res.end(buf)
+    return
+  }
+
+  /* GET /fixes/:id/shot.png — той самий кадр, але вже з теки закритої правки.
+     Потрібен тому, що `GET /shots/:file` живе рівно стільки, скільки живе
+     нота: після закриття файл переїжджає в `data/fixes/<id>/`, і URL на нього
+     перестає існувати. Рев'ю-сторінка при цьому показує саме архів — сотні
+     правок, застосунок за день змінюється, і живий iframe відповідає на
+     питання «як воно зараз», тоді як питання було «як воно було».
+
+     Ім'я файлу в шляху зафіксоване літералом, а не взяте з запиту: у теці
+     правки лежать ще `fix.json` і `note.md`, і ендпоінт «віддай будь-що з
+     теки» був би читалкою внутрішніх метаданих через HTTP. Тут з мережі
+     приходить рівно один змінний сегмент — id, — і він проходить той самий
+     білий список, що й усюди: charset ID_RE (сепаратори в нього не входять),
+     явна відмова на `..` і стеля довжини. Нічого не склеюється, поки id не
+     пройшов перевірку. */
+  const fixShot = path.match(/^\/fixes\/(.+)\/shot\.png$/)
+  if (fixShot && req.method === 'GET') {
+    let id
+    try {
+      id = decodeURIComponent(fixShot[1])
+    } catch {
+      fail(res, 404, 'no such shot')
+      return
+    }
+    if (id.length > MAX_ID || !ID_RE.test(id) || id.includes('..')) {
+      fail(res, 404, 'no such shot')
+      return
+    }
+    let buf
+    try {
+      buf = readFileSync(join(FIXES_DIR, id, 'shot.png'))
+    } catch {
+      /* 404 і на «теки немає», і на «тека є, кадру немає»: для сторінки це
+         один і той самий випадок — показати нема чого, — і розрізняти їх
+         кодами означало б розповідати мережі про вміст диска. */
+      fail(res, 404, 'no such shot')
+      return
+    }
+    res.writeHead(200, {
+      ...cors,
+      'Content-Type': 'image/png',
+      'Content-Length': buf.length,
+      /* На відміну від кадру відкритої ноти, цей файл незмінний: тека правки
+         закрита й заднім числом не переписується. Тож тут кеш не бреше, а
+         економить — сторінка гортає правки стрілками, і кожен повернений
+         кадр інакше їхав би по мережі знову. */
+      'Cache-Control': 'public, max-age=86400, immutable',
     })
     res.end(buf)
     return
