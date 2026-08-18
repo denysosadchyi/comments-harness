@@ -474,7 +474,14 @@ const SHOT_MAX_BYTES = 4 * 1024 * 1024
 const SHOT_WAIT_MS = 5000
 
 type Shot =
-  | { status: 'taking' }
+  /* `ratio` — ширина/висота ТОГО САМОГО прямокутника, який зараз знімається
+     (`shotFrame` у мить кліку). Заглушка «Capturing the frame…» тримає ним
+     місце, тож коли приїде готовий кадр, він стане рівно туди, де стояла
+     заглушка, і панель не смикнеться. Це не магічна висота «десь так»: інші
+     пропорції взяти нізвідки, бо предмет уже обраний і виміряний. Пропорції
+     може й не бути (виродженим боксом зйомка все одно впаде) — тоді заглушка
+     лишається такою, якою була. */
+  | { status: 'taking'; ratio?: number }
   | { status: 'ready'; blob: Blob; url: string }
   | { status: 'failed'; reason: string }
 
@@ -554,18 +561,37 @@ const nextFrame = (fallbackMs = 120) =>
   })
 
 /* Оверлей ховається лічильником, а не запамʼятованим попереднім значенням:
-   друга зйомка, почата поки перша в польоті, прочитала б уже виставлений
-   `display:none` і саме його б і «відновила» — оверлей зник би до
-   перезавантаження сторінки. Клацнути двічі легко: під час зйомки тулзи не
-   видно, і це саме та мить, коли користувач думає, що вона зламалась. */
+   друга зйомка, почата поки перша в польоті, прочитала б уже виставлене
+   значення і саме його б і «відновила» — оверлей зник би до перезавантаження
+   сторінки. Клацнути двічі легко: під час зйомки тулзи не видно, і це саме та
+   мить, коли користувач думає, що вона зламалась.
+
+   ── Чому `opacity`, а НЕ `display:none` ───────────────────────────────────
+   Тут був `display:none`, і він коштував фокуса в композері. Ланцюжок такий:
+   клік ставить чернетку й одразу запускає зйомку; композер монтується, поле
+   отримує фокус; за кадр-два зйомка доходить до `hideHost` і гасить хост —
+   а хост є предком того самого поля. Елемент, який перестав рендеритись,
+   фокус утримати не може: за специфікацією фокус їде на `<body>`, і браузери
+   так і роблять. Потім `showHost` повертає оверлей — але не фокус. Ззовні це
+   виглядало як «панель блимнула й повернулась із кадром, а текст більше
+   нікуди не йде».
+
+   `opacity: 0` знімає з екрана рівно те саме, але вузол лишається
+   відрендереним, тож фокус, каретка й набраний текст переживають зйомку. У
+   кадр оверлей не потрапляє двічі: він і повністю прозорий, і відсіяний
+   `ignoreElements`. Розкладку сторінки хост не тримає в жодному разі —
+   він `position: fixed`.
+
+   Повертати фокус руками після зйомки було б лікуванням симптому: поле
+   насправді нікуди не дівається і не перемонтовується, його просто гасили. */
 let shotHides = 0
 function hideHost(host: HTMLElement) {
   shotHides += 1
-  host.style.display = 'none'
+  host.style.opacity = '0'
 }
 function showHost(host: HTMLElement) {
   shotHides = Math.max(0, shotHides - 1)
-  if (shotHides === 0) host.style.removeProperty('display')
+  if (shotHides === 0) host.style.removeProperty('opacity')
 }
 
 async function takeShot(subject: Element | Rect, host: HTMLElement): Promise<{ blob: Blob; url: string }> {
@@ -877,7 +903,8 @@ const CSS_TEXT = `
 .smn-hit { pointer-events: auto; }
 
 /* ── Launcher ─────────────────────────────────────────────────────────────
-   Bottom-right, one row high, always the same three things: aim, count, list.
+   Bottom-right, one row high, always the same things in the same order: the
+   index with its count, the two crosshairs (block, then spacing), the theme.
    It is furniture — it must be findable without ever being the loudest thing
    on somebody else's screenshot. */
 .smn-bar {
@@ -1454,13 +1481,22 @@ img.smn-shot {
 }
 `
 
-/* Two glyphs, drawn rather than imported: the icon layer in this repo fetches
+/* Three glyphs, drawn rather than imported: the icon layer in this repo fetches
    its bodies from api.iconify.design at runtime, and the review box is often
    offline. */
 const IconAim = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
     <circle cx="12" cy="12" r="7" />
     <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+  </svg>
+)
+/* Приціл на відступ. Дві плити й розмірна стрілка між ними — той самий знак,
+   що й на кресленні, і навмисно НЕ схожий на кружечок прицілу на блок: дві
+   кнопки поруч мусять розрізнятись силуетом, а не підписом. */
+const IconGapAim = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+    <path d="M3 4h18M3 20h18" />
+    <path d="M12 8v8M9.5 10.5 12 8l2.5 2.5M9.5 13.5 12 16l2.5-2.5" />
   </svg>
 )
 const IconList = () => (
@@ -1482,8 +1518,31 @@ function initialTheme(): Theme {
   return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
 
+/* ── Вкладка рев'ю-шухляди ─────────────────────────────────────────────────
+   Шухляда рев'ю-сторінки показує анотований екран в iframe і ставить у нього
+   свою мітку — порядковий номер правки в УСЬОМУ лозі. Живий оверлей у тому ж
+   iframe малював поруч власний пін, нумерований у межах екрана. Два числа на
+   одному місці («302» і «1»), і жодне не пояснює друге: перше — закрита правка
+   з історії, друге — відкрита нота. Шухляда показує минуле, тож піни відкритих
+   нот у ній зайві, а анотувати з неї не треба взагалі — для цього є застосунок.
+
+   Чому маркер, а не `window.parent !== window`: в iframe цей застосунок живе не
+   лише в шухляді. Навігатор прототипу («/») теж вантажить його в кадрі, і ТАМ
+   оверлей потрібен. «Я в кадрі» не відповідає на питання «чий це кадр», тож
+   сигнал мусить дати саме рев'ю-сторінка — параметром у `src` свого iframe.
+
+   Зчитується РАЗ на документ, а не в рендері: SPA-навігація всередині шухляди
+   параметр із адреси прибирає, і перевірка «за поточним location» відродила б
+   оверлей на другому ж кліку. Прапорець живе стільки, скільки живе вкладка.
+
+   У `url` ноти маркер не потрапляє за побудовою: у такій вкладці оверлея
+   немає, отже ноті нізвідки взятись. Роут застосунку параметр теж не чіпає —
+   роути тут матчаться по `pathname`. */
+const REVIEW_FRAME = new URLSearchParams(location.search).get('smn-frame') === 'review'
+
 export default function DevAnnotator() {
   const { pathname, search } = useLocation()
+  if (REVIEW_FRAME) return null
   /* See the header: "/" is ProtoNav, and the same app runs inside its iframe. */
   if (pathname === '/') return null
   return <Overlay pathname={pathname} search={search} />
@@ -1512,7 +1571,25 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [offline, setOffline] = useState(false)
 
-  const [aiming, setAiming] = useState(false)
+  /* ── Два приціли, а не один розумний ───────────────────────────────────
+     Був один приціл, який САМ вирішував, що під курсором: блок чи проміжок
+     між блоками. На папері це «менше режимів», на практиці — режим, яким
+     користувач не керує: біля кромки картки точка потрапляє в порожнечу
+     контейнера, автомат перемикається в проміжок, і замість картки
+     анотується щілина. Вибір блока став лотереєю.
+
+     Тому режим тепер називає користувач, а не евристика:
+       'element' — ловить лише вузли, `measureGap` тут не викликається взагалі
+                   (поводиться точно як приціл до появи проміжків);
+       'gap'     — ловить лише порожнечі; над вузлом мовчить і НЕ підставляє
+                   замість нього батька.
+     `null` — приціл вимкнено.
+
+     Автовизначення як окремої гілки в коді не лишилось: воно не «вимкнене на
+     випадок повернення», його немає. `measureGap` живе далі, але вже як
+     внутрішня механіка другого режиму — там воно й було корисним, бо
+     міряти проміжок усе одно нічим іншим. */
+  const [aim, setAim] = useState<'element' | 'gap' | null>(null)
   const [hover, setHover] = useState<Anchor | null>(null)
   const [hoverTag, setHoverTag] = useState('')
   /* Не `null` = під курсором зараз порожнеча, а не блок. Тримається окремо
@@ -1566,7 +1643,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     setDraft(null)
     setShot(null)
     setOpenId(null)
-    setAiming(false)
+    setAim(null)
     setHover(null)
     setHoverGap(null)
   }
@@ -1774,15 +1851,25 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
      click. The cursor is set on <body> because a shadow rule cannot reach it;
      it is restored on exit, including the unmount path. */
   useEffect(() => {
-    if (!aiming) return
+    if (!aim) return
 
     const track = (e: MouseEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY)
       if (!el || host.contains(el) || el === document.documentElement) return
       /* Дешевий прохід: селектори тут не будуються (`deep: false`), бо це
          рух миші, а `buildSelector` ходить по всьому документу. Прицілу
-         досить властивості й числа. */
-      const gap = measureGap(el, e.clientX, e.clientY, null)
+         досить властивості й числа. У режимі блока не викликається взагалі —
+         блок не має права перетворитись на проміжок під курсором. */
+      const gap = aim === 'gap' ? measureGap(el, e.clientX, e.clientY, null) : null
+      if (aim === 'gap' && !gap) {
+        /* Чесна відмова замість підстановки батька: тут не порожнеча, і
+           режим це показує курсором, а не тим, що тихо підсвічує щось інше. */
+        setHover(null)
+        setHoverGap(null)
+        document.body.style.cursor = 'not-allowed'
+        return
+      }
+      document.body.style.cursor = 'crosshair'
       const r = el.getBoundingClientRect()
       setHover(
         gap
@@ -1801,7 +1888,11 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       const r = el.getBoundingClientRect()
       /* А тут — повний прохід: селектори сусідів і носіїв декларацій це те,
          заради чого нота про проміжок узагалі існує. */
-      const gap = measureGap(el, e.clientX, e.clientY, deepSelector)
+      const gap = aim === 'gap' ? measureGap(el, e.clientX, e.clientY, deepSelector) : null
+      /* Клік повз ціль у режимі проміжку не робить НІЧОГО — але лишається
+         зʼїденим (preventDefault вище), інакше промах відкрив би меню чи
+         повів на інший роут просто тому, що користувач не влучив у щілину. */
+      if (aim === 'gap' && !gap) return
       setDraft({
         capture: gap ? captureGap(el, gap) : capture(el),
         el,
@@ -1820,7 +1911,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
           : null,
       })
       setOpenId(null)
-      setAiming(false)
+      setAim(null)
       setHover(null)
       setHoverGap(null)
 
@@ -1829,13 +1920,17 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
          тултип чи перемалюватись після ре-рендера — і кадр показав би не те,
          на що дивилась людина. Зйомка нічого не блокує: не вдалась — нота
          поїде без неї. */
-      setShot({ status: 'taking' })
-      const run = shotRun.current + 1
-      shotRun.current = run
       /* Субʼєкт кадру для проміжку — не контейнер, а сама порожнеча РАЗОМ із
          сусідами: контейнером тут часто виявляється пів сторінки, а дірка сама
-         по собі в кадрі не читається. */
-      shotJob.current = takeShot(gap ? gap.context : el, host).then(
+         по собі в кадрі не читається. Береться ОДИН раз і на вимір пропорцій,
+         і на саму зйомку — два виклики розійшлись би, якби між ними щось
+         перемалювалось, і заглушка тримала б місце не під той кадр. */
+      const subject = gap ? gap.context : el
+      const frame = shotFrame(subject)
+      setShot({ status: 'taking', ratio: frame.w > 0 && frame.h > 0 ? frame.w / frame.h : undefined })
+      const run = shotRun.current + 1
+      shotRun.current = run
+      shotJob.current = takeShot(subject, host).then(
         (ready) => {
           /* Чужий номер означає, що чернетки вже немає (скасування, зміна
              роуту, анмаунт) — прев'ю нікому показувати, тож URL відкликається
@@ -1875,15 +1970,36 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       document.removeEventListener('mouseup', swallow, true)
       document.removeEventListener('click', pick, true)
     }
-  }, [aiming, host])
+  }, [aim, host])
 
-  /* Alt+A aims, Alt+N opens the index, Esc backs out of whatever is open.
-     Alt because Ctrl/Cmd combinations of two letters are all spoken for by the
-     browser, and this has to work on a machine that is not the developer's. */
+  /* Один вхід у режим на кнопку й на хоткей: обидва мусять і закривати
+     чернетку з відкритою нотою, і вміти перекинути приціл з одного режиму
+     в інший БЕЗ проміжного виходу. Повторний виклик того самого режиму —
+     вихід, тому це toggle, а не set. */
+  const enterAim = useCallback(
+    (mode: 'element' | 'gap') => {
+      /* Саме `closeDraft`, а не `setDraft(null)`: чернетка може тримати зйомку
+         в польоті, і кинута отак вона лишила б невідкликаний blob-URL. */
+      closeDraft()
+      setOpenId(null)
+      setHover(null)
+      setHoverGap(null)
+      setAim((v) => (v === mode ? null : mode))
+    },
+    [closeDraft],
+  )
+
+  /* Alt+A aims at a block, Alt+S at a spacing, Alt+N opens the index, Esc
+     backs out of whatever is open. Alt because Ctrl/Cmd combinations of two
+     letters are all spoken for by the browser, and this has to work on a
+     machine that is not the developer's. `S` for the second crosshair because
+     it sits under the same hand as `A` and stands for the field the note ends
+     up carrying (`spacing`); `A` stays where it was — it is in the docs and in
+     the key table the installer prints, and people already have it in fingers. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setAiming(false)
+        setAim(null)
         setHover(null)
         setHoverGap(null)
         closeDraft()
@@ -1892,11 +2008,9 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       }
       if (!e.altKey || e.ctrlKey || e.metaKey) return
       const k = e.key.toLowerCase()
-      if (k === 'a') {
+      if (k === 'a' || k === 's') {
         e.preventDefault()
-        closeDraft()
-        setOpenId(null)
-        setAiming((v) => !v)
+        enterAim(k === 'a' ? 'element' : 'gap')
       } else if (k === 'n') {
         e.preventDefault()
         /* Хоткей робить рівно те, що кнопка, і зникає разом із нею: панель,
@@ -1909,7 +2023,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [closeDraft, showList])
+  }, [closeDraft, enterAim, showList])
 
   const toggleTheme = useCallback(() => {
     setTheme((t) => {
@@ -2038,7 +2152,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     <>
       <style>{CSS_TEXT}</style>
       <div className="smn" data-theme={theme}>
-        {aiming &&
+        {aim &&
           hover &&
           (hoverGap ? (
             <GapBand box={hover} spacing={hoverGap.spacing} tag={hoverTag} />
@@ -2061,7 +2175,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
             />
           ))}
         {/* Pins live above the aim outline but below the panels. */}
-        {!aiming &&
+        {!aim &&
           pageNotes.map((n) => {
             const p = pins[n.id]
             if (!p) return null
@@ -2207,18 +2321,29 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
               <span className="smn-sep" />
             </>
           )}
+          {/* Два приціли — дві кнопки, а не один перемикач у два стани.
+              Перемикач показує лише те, де він СТОЇТЬ; два режими поруч
+              показують ще й те, що другий взагалі існує — інакше приціл на
+              відступ знайде тільки той, хто прочитав доки. Натиснута кнопка
+              (aria-pressed) і є індикацією режиму на самій смужці, тож
+              «у якому я зараз» видно, не вгадуючи за виглядом підсвітки. */}
           <button
             type="button"
             className="smn-btn"
-            aria-pressed={aiming}
+            aria-pressed={aim === 'element'}
             title="Aim at an element (Alt+A)"
-            onClick={() => {
-              setDraft(null)
-              setOpenId(null)
-              setAiming((v) => !v)
-            }}
+            onClick={() => enterAim('element')}
           >
             <IconAim />
+          </button>
+          <button
+            type="button"
+            className="smn-btn"
+            aria-pressed={aim === 'gap'}
+            title="Aim at a spacing (Alt+S)"
+            onClick={() => enterAim('gap')}
+          >
+            <IconGapAim />
           </button>
           <span className="smn-sep" />
           <button
@@ -2309,7 +2434,17 @@ function Composer({
               побачити, що саме поїде агенту. Невдача каже про себе рядком і нічим
               не заважає: нота відправляється точно так само. */}
           {shot?.status === 'ready' && <img className="smn-shot" src={shot.url} alt="Frame of the picked element" />}
-          {shot?.status === 'taking' && <div className="smn-shot smn-shot--wait">Capturing the frame…</div>}
+          {shot?.status === 'taking' && (
+            <div
+              className="smn-shot smn-shot--wait"
+              /* Місце під кадр резервується його ж пропорціями (див. `Shot`),
+                 а стеля висоти лежить у CSS і збігається з `max-height`
+                 картинки — тож заглушка й кадр мають однакову коробку. */
+              style={shot.ratio ? { aspectRatio: String(shot.ratio) } : undefined}
+            >
+              Capturing the frame…
+            </div>
+          )}
           {shot?.status === 'failed' && <div className="smn-shot smn-shot--none">No frame — the note goes without it</div>}
         </div>
         <textarea
