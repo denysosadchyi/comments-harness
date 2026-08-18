@@ -27,6 +27,7 @@ Six processes and files, zero npm dependencies, two HTTP ports.
 | Part | File | What it does |
 |---|---|---|
 | Overlay | `overlay/annotator.tsx` | crosshair, popover, markers and the comment thread, rendered inside your dev build |
+| Gap measuring | `overlay/measure-gap.ts` | the spacing math behind gap notes; `node overlay/measure-gap.test.mjs` checks it against a stub DOM, no browser |
 | Notes server | `server/notes-server.mjs` | :4747, owns the open notes, long-polls for the watchdog |
 | MCP bridge | `mcp/notes-mcp.mjs` | seven tools an agent uses to read, claim and close notes |
 | Watchdog | `watchdog/dispatcher.mjs` | waits on the note long-poll and on the rework queue, and launches an executor (`claude -p`) per task |
