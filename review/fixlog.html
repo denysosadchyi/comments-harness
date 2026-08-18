@@ -1090,6 +1090,19 @@
 
       .dr__stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 
+      /* Порожня шухляда мусить пояснювати себе. Мітки немає у двох випадках —
+         давня правка без координат і недоступний сервер, — і мовчання в
+         обох читається однаково: «зламалось». Тому рядок, а не тиша. */
+      .dr__note {
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 7px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--bg-inset);
+        color: var(--muted);
+        font: 500 12px/1.4 var(--font-ui);
+      }
+
       /* Кадр живе рівно в одному місці — у діалозі Details, під контекстом
          елемента. У шухляді його немає свідомо: шухляду відкривають, щоб
          подивитись на ЖИВУ сторінку з міткою правки, а читають, що саме було
@@ -1421,6 +1434,7 @@
           </div>
         </header>
         <div class="dr__stage">
+          <p class="dr__note" id="drNote" hidden></p>
           <iframe class="dr__frame" id="drFrame" title="Fix screen"></iframe>
         </div>
       </aside>
@@ -2532,7 +2546,110 @@
       const pinsFor = (route, row) =>
         state.rows
           .filter((r) => r.x != null && r.y != null && navRoute(r.routePath) === route)
-          .map((r) => ({ x: r.x, y: r.y, num: r.num, main: !!row && r.key === row.key }))
+          .map((r) => ({ x: r.x, y: r.y, num: r.num, key: r.key, main: !!row && r.key === row.key }))
+
+      /* Rect (getBoundingClientRect у мить кліку) + розмір вікна → координати
+         мітки: `x` — центр елемента у відсотках ширини вікна, `y` — центр у
+         пікселях від верху документа. Одна формула на обидва джерела —
+         живу ноту з `GET /notes` і закриту правку з `GET /fixes/pins`, — бо
+         другий її екземпляр розійшовся б із першим при першій же правці, і
+         мітки двох правок на одному екрані сіли б за різними правилами.
+         Прокрутки в контракті немає: на прокрученому екрані пін сяде вище за
+         сам елемент — наближення з реальних даних, і воно краще за нічого. */
+      function pinAt(rect, viewport) {
+        if (!rect) return {}
+        const vw = (viewport && viewport.w) || 0
+        return {
+          x: vw ? ((rect.x + rect.w / 2) / vw) * 100 : undefined,
+          y: rect.y + rect.h / 2,
+        }
+      }
+
+      /* ── Мітки закритих правок ────────────────────────────────────────
+         Рядок закритої правки приїжджає з `fixlog.md`, а там координат немає
+         й бути не може — це людиночитаний лог. Тобто `pinsFor` вище бачить
+         мітки ЛИШЕ живих нот, а користувач відкриває майже завжди архівний
+         рядок: черга зазвичай порожня. Звідси й бралася порожня шухляда.
+
+         Координати при цьому на диску є: `data/fixes/<id>/fix.json` несе той
+         самий `rect`, скопійований у мить закриття. `GET /fixes/pins?route=`
+         їх і віддає — сирими, тим самим `pinAt` вони й перераховуються.
+
+         Кеш на роут: шухляду гортають стрілками вздовж одного екрана, і без
+         нього кожен крок бив би по серверу заради нерухомого архіву. TTL
+         короткий, бо сторож дописує теки постійно — правка, закрита хвилину
+         тому, мусить з'явитися. */
+      const PINS_TTL = 30000
+      const pinCache = new Map()
+      /* Номер відповіді: шухляда встигає переїхати на інший рядок раніше, ніж
+         долетить запит, і застаріла відповідь інакше намалювала б мітки
+         попереднього екрана. */
+      let pinsSeq = 0
+
+      function fetchPins(route) {
+        const hit = pinCache.get(route)
+        if (hit && Date.now() - hit.at < PINS_TTL) return hit.p
+        const p = getJSON(`${ANN}/fixes/pins?route=${encodeURIComponent(route)}`)
+          .then((v) => (v && Array.isArray(v.pins) ? v.pins : []))
+          /* Помилку не ковтаємо в порожній масив: «сервер не відповів» і «на
+             екрані немає міток» — різні повідомлення в шухляді. */
+          .catch((e) => { pinCache.delete(route); throw e })
+        pinCache.set(route, { at: Date.now(), p })
+        return p
+      }
+
+      /* Мітка отримує номер СВОГО рядка з колонки «#» — так від мітки видно
+         рядок, а від рядка мітку. Зіставлення за `id`: ім'я теки правки і є
+         ключ рядка в індексі (`r.key`). Правка, якої в таблиці немає (фільтр,
+         не той день), номера не має — така мітка малюється крапкою, бо місце
+         вона показує чесно, а посилатися їй нема на що. */
+      async function loadPins(route, row) {
+        const seq = ++pinsSeq
+        const note = $('drNote')
+        let closed
+        try {
+          closed = await fetchPins(route)
+        } catch (e) {
+          if (seq !== pinsSeq) return
+          note.hidden = false
+          note.textContent = `Pins unavailable — the notes server (${ANN}) did not answer: ${e.message}`
+          return
+        }
+        if (seq !== pinsSeq) return
+
+        const live = pinsFor(route, row)
+        const seen = new Set(live.map((p) => p.key).filter(Boolean))
+        const byKey = new Map(state.rows.map((r) => [r.key, r]))
+        const pins = live.slice()
+        for (const c of closed) {
+          /* Нота, яка ще жива і вже має теку правки (сторож пише рядок раніше,
+             ніж закриває ноту), інакше дала б дві мітки на одному місці. */
+          if (seen.has(c.id)) continue
+          const xy = pinAt(c.rect, c.viewport)
+          if (xy.x == null || xy.y == null) continue
+          const r = byKey.get(c.id)
+          pins.push({ x: xy.x, y: xy.y, num: r ? r.num : 0, key: c.id, main: !!row && c.id === row.key })
+        }
+
+        drPins = pins
+        /* Шар уже міг бути намальований живими мітками — `paintPins`
+           ідемпотентна й нового набору сама не побачить, тож старий знімаємо
+           руками. `pinDoc` не чіпаємо: якщо до головної мітки вже прокрутили,
+           другий ривок під руками не потрібен. */
+        const fr = $('drFrame')
+        try {
+          const fd = fr.contentDocument
+          const old = fd && fd.getElementById('fixlog-pins')
+          if (old) old.remove()
+        } catch { /* cross-origin — малювати все одно нікуди */ }
+        if (pins.length) {
+          note.hidden = true
+        } else {
+          note.hidden = false
+          note.textContent = 'No pins on this screen — none of its fixes stored coordinates.'
+        }
+        paintPins()
+      }
 
       function openDrawer(route, key, row) {
         if (!route || route === '—') return
@@ -2561,7 +2678,13 @@
         $('drOpen').href = route
         drRoute = route
         drRow = row
+        /* Спершу — мітки живих нот, вони вже в руках і малюються без мережі.
+           Мітки закритих правок доїжджають запитом і домальовуються поверх;
+           до того моменту рядок-пояснення мовчить, бо «поки невідомо» — не
+           те саме, що «немає». */
         drPins = pinsFor(route, row)
+        $('drNote').hidden = true
+        loadPins(route, row)
         /* Шухляда показує ЖИВУ сторінку з мітками правок — заради них її й
            відкривають. Кадр сюди не приходить узагалі: він живе в діалозі
            Details, поруч із тредом, де читають, що саме було анотовано. */
@@ -2601,6 +2724,10 @@
         $('drFrame').src = 'about:blank'
         $('drFrame').dataset.route = ''
         drRoute = ''; drRow = null; drPins = []
+        /* Відповідь, що вже летить, більше нікому не потрібна — новий номер
+           змусить її мовчки самознищитись замість малювати в закритий кадр. */
+        pinsSeq++
+        $('drNote').hidden = true
         document.body.style.overflow = ''
       }
 
@@ -3274,15 +3401,10 @@
         const mk = (a, st) => {
           const created = Date.parse(a.createdAt || '') || a.timestamp || 0
           /* Пін. Нота більше не носить готових x/y тулбара — є `rect`
-             (getBoundingClientRect у мить кліку) і `viewport`. Звідси x у
-             відсотках ширини й y у пікселях, як їх чекають мітки шухляди. Прокрутки
-             в контракті немає, тож на прокрученому екрані пін сяде вище за
-             сам елемент — це наближення з реальних даних, а не вигаданe
-             поле; краще приблизний маркер, ніж жодного. */
-          const rect = a.rect
-          const vw = (a.viewport && a.viewport.w) || 0
-          const pinX = rect && vw ? ((rect.x + rect.w / 2) / vw) * 100 : undefined
-          const pinY = rect ? rect.y + rect.h / 2 : undefined
+             (getBoundingClientRect у мить кліку) і `viewport`. Перерахунок
+             живе в `pinAt` разом із міткою закритої правки: обидві мітки в
+             одній шухляді, і формула в них мусить бути одна. */
+          const { x: pinX, y: pinY } = pinAt(a.rect, a.viewport)
           return {
             key: a.id, status: st, time: hhmm(created), routePath: routeOf(a.url),
             req: a.note || '',

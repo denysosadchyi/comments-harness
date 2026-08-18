@@ -65,6 +65,8 @@ import {
   existsSync,
   unlinkSync,
   mkdirSync,
+  readdirSync,
+  statSync,
 } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
@@ -624,6 +626,120 @@ function wake() {
   }
 }
 
+/* ── Мітки закритих правок ───────────────────────────────────────────────
+   Рев'ю-сторінка малює в шухляді мітку на місці, про яке писали. Для живої
+   ноти координати приходять із `GET /notes` — вони в самій ноті. Для закритої
+   не приходили нізвідки: рядок такої правки сторінка збирає з індексу
+   `data/fixlog.md`, а це людиночитаний лог, у якому координат немає й бути не
+   може. Тека правки при цьому їх зберігає — `fix.json` несе `rect` і
+   `viewport`, скопійовані з ноти в мить закриття. Тобто дані лежали на диску
+   й були недосяжні з мережі; цей ендпоінт їх і віддає.
+
+   Віддається СИРИЙ `rect` + `viewport`, а не готові x/y. Перерахунок
+   (`x` = центр елемента у відсотках ширини вікна, `y` = центр у пікселях)
+   сторінка вже робить для живих нот, і другий, серверний, екземпляр тієї ж
+   формули розійшовся б із першим при першій же правці — тоді мітка закритої
+   правки сіла б інакше, ніж мітка живої на тому ж екрані. Сервер тут читач
+   диска, не калькулятор.
+
+   Індекс тримається в памʼяті: 331 тека на кожен запит — це 331 `readFileSync`
+   там, де сторінка смикає ендпоінт на кожне відкриття шухляди. Маркер
+   свіжості — `mtime` самої теки `data/fixes/`: сторож заводить теку правки, і
+   саме це рухає mtime батька. Правки без `rect` у відповідь не потрапляють
+   узагалі — заглушка з нульовими координатами поставила б мітку в лівий
+   верхній кут і збрехала б переконливіше, ніж її відсутність. */
+const fixPins = {
+  mtimeMs: -1,
+  byRoute: new Map(),
+  /* Розібрані теки: id → {route, rect, viewport} або null, якщо мітки немає.
+     Кешується і негативний результат теж, інакше кожен запит перечитував би
+     ті ~280 тек, у яких координат немає і не буде. */
+  seen: new Map(),
+  /* Теки, у яких `fix.json` ще не з'явився. Тека створюється раніше, ніж у
+     неї пишуть, і mtime батька на запис усередину не рухається — тобто без
+     цього списку правка, спіймана в цю щілину, лишилася б без мітки назавжди.
+     Такі теки перечитуються на кожній перевірці, і їх одиниці. */
+  unread: new Set(),
+}
+
+/* Той самий зріз, що й `navRoute` на рев'ю-сторінці: чистий шлях без запиту,
+   хеша й хвостової пунктуації. Ключі індексу і `?route=` з мережі проходять
+   через нього обидва, тож порівнюються однаково нормалізовані рядки. */
+function routeKey(v) {
+  const m = String(v || '').match(/\/[\w\-./:%]*/)
+  return m ? m[0].replace(/[.,;:)]+$/, '') : ''
+}
+
+function readFixPin(id) {
+  let fix
+  try {
+    fix = JSON.parse(readFileSync(join(FIXES_DIR, id, 'fix.json'), 'utf8'))
+  } catch {
+    return undefined // теки/файлу ще немає — спробуємо наступного разу
+  }
+  const route = routeKey(fix.route)
+  if (!route || badRect(fix.rect) || badViewport(fix.viewport)) return null
+  if (!fix.rect || !fix.viewport) return null
+  return {
+    id: typeof fix.id === 'string' && fix.id ? fix.id : id,
+    route,
+    rect: { x: fix.rect.x, y: fix.rect.y, w: fix.rect.w, h: fix.rect.h },
+    viewport: { w: fix.viewport.w, h: fix.viewport.h },
+  }
+}
+
+function refreshFixPins() {
+  let mtimeMs
+  try {
+    mtimeMs = statSync(FIXES_DIR).mtimeMs
+  } catch {
+    return // тек правок ще немає — порожній індекс, не помилка
+  }
+  const grew = mtimeMs !== fixPins.mtimeMs
+  if (!grew && !fixPins.unread.size) return
+
+  let names
+  try {
+    names = grew ? readdirSync(FIXES_DIR) : [...fixPins.unread]
+  } catch {
+    return
+  }
+
+  let changed = false
+  if (grew) {
+    /* Тека могла й зникнути (перенесли, прибрали руками) — тоді запис у кеші
+       став би міткою, за якою на диску вже нічого немає. Повний перечит —
+       єдиний момент, коли це видно. */
+    const live = new Set(names)
+    for (const name of [...fixPins.seen.keys()]) {
+      if (live.has(name)) continue
+      if (fixPins.seen.get(name)) changed = true
+      fixPins.seen.delete(name)
+      fixPins.unread.delete(name)
+    }
+  }
+  for (const name of names) {
+    if (name.length > MAX_ID || !ID_RE.test(name) || name.includes('..')) continue
+    if (fixPins.seen.has(name)) continue
+    const pin = readFixPin(name)
+    if (pin === undefined) { fixPins.unread.add(name); continue }
+    fixPins.unread.delete(name)
+    fixPins.seen.set(name, pin)
+    if (pin) changed = true
+  }
+  fixPins.mtimeMs = mtimeMs
+
+  if (!changed && fixPins.byRoute.size) return
+  const byRoute = new Map()
+  for (const pin of fixPins.seen.values()) {
+    if (!pin) continue
+    const list = byRoute.get(pin.route)
+    if (list) list.push(pin)
+    else byRoute.set(pin.route, [pin])
+  }
+  fixPins.byRoute = byRoute
+}
+
 const server = createServer(async (req, res) => {
   const url = req.url || '/'
   /* The query string is meaningful on GET /notes and cache-busting noise
@@ -891,6 +1007,41 @@ const server = createServer(async (req, res) => {
       'Cache-Control': 'no-store',
     })
     res.end(buf)
+    return
+  }
+
+  /* GET /fixes/pins?route=/app/client/rewards — мітки ВСІХ закритих правок
+     цього екрана. Мусить стояти перед матчером `/fixes/:id/shot.png` нижче
+     лише за читабельністю: той вимагає хвіст `/shot.png` і «pins» за id не
+     візьме.
+
+     `route` з мережі у файлову систему не потрапляє взагалі — це рядок для
+     порівняння з уже прочитаним індексом, а не сегмент шляху. Тому єдина
+     перевірка тут — стеля довжини й нормалізація; `..` в ньому нешкідливий
+     рівно тому, що join з ним ніхто не робить.
+
+     Правки без координат мовчки відсутні у відповіді: порожній масив — це
+     нормальна відповідь «на цьому екрані міток немає», а не помилка. */
+  if (req.method === 'GET' && path === '/fixes/pins') {
+    const raw = params.get('route')
+    if (raw === null || raw === '') {
+      fail(res, 400, 'route is required')
+      return
+    }
+    if (raw.length > 512) {
+      fail(res, 400, 'route must be 512 characters or fewer')
+      return
+    }
+    refreshFixPins()
+    const key = routeKey(raw)
+    const list = (key && fixPins.byRoute.get(key)) || []
+    send(res, 200, {
+      route: key,
+      /* Копія, а не сам масив індексу: `send` серіалізує його синхронно, але
+         віддавати назовні посилання на живу структуру — запрошення до
+         випадкової мутації наступним споживачем. */
+      pins: list.map((p) => ({ id: p.id, rect: p.rect, viewport: p.viewport })),
+    })
     return
   }
 
