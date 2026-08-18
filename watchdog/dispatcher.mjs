@@ -583,8 +583,40 @@ function buildBrief(note) {
     NOTES_URL: NOTES_URL,
   }
   if (shotAbs) values.SHOT = shotAbs
+  Object.assign(values, spacingValues(note))
 
   return renderTemplate(tpl, values)
+}
+
+/* Проміжок. Поля `spacing` у звичайної ноти немає взагалі, і саме його
+   відсутність вимикає весь блок у шаблоні: ключ `SPACING` лишається
+   невизначеним, `{{#SPACING}}…{{/SPACING}}` викидається цілком, прочерків у
+   брифі не з'являється. Список джерел збираємо тут, а не в шаблоні: шаблон
+   уміє лише підставляти рядок, а джерел від нуля до дюжини. */
+function spacingValues(note) {
+  const sp = note.spacing
+  if (!sp || typeof sp !== 'object') return {}
+  const between = Array.isArray(sp.between) ? sp.between : [null, null]
+  const side = (v) => (v ? `\`${v}\`` : '`(кромка)`')
+  const sources = Array.isArray(sp.sources) ? sp.sources : []
+  const list = sources.length
+    ? sources
+        .map(
+          (s) =>
+            `- \`${s.kind}\` на ${s.selector ? `\`${s.selector}\`` : '(селектор невідомий)'} — ` +
+            `\`${s.property}: ${s.value}\``,
+        )
+        .join('\n')
+    : '_оверлей не зміг назвати джерело — шукай по коду сам_'
+  return {
+    /* Гейт умовного блока. Значення сюди ж і друкується не буде — у шаблоні
+       вживаються лише вкладені ключі, — але воно мусить бути непорожнім. */
+    SPACING: 'yes',
+    SPACING_PX: sp.px,
+    SPACING_AXIS: sp.axis,
+    SPACING_BETWEEN: `${side(between[0])} і ${side(between[1])}`,
+    SPACING_SOURCES: list,
+  }
 }
 
 /* ─────────────────────────── бриф доробки ─────────────────────────── */

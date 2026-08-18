@@ -183,12 +183,34 @@ function statusLine(n) {
   return `  · ${n.status}`
 }
 
+/* Нота про проміжок описує ПОРОЖНЕЧУ, а не блок, і агент має зрозуміти це з
+   першого виклику: інакше він піде правити елемент, на який показує
+   `selector`, хоча предмет зауваження — дірка поруч. Рядок тому каже три речі
+   одразу — скільки пікселів, уздовж якої осі й між чим і чим, — а перелік
+   джерел лишається брифові й `notes_get`: тут важливо не «чим полагодити», а
+   «що саме анотовано». */
+function spacingLine(n) {
+  const sp = n.spacing
+  if (!sp || typeof sp !== 'object') return null
+  const side = (v) => (v ? clip(v, 80) : '(кромка)')
+  const between = Array.isArray(sp.between) ? sp.between : [null, null]
+  const kinds = Array.isArray(sp.sources) ? sp.sources.map((s) => s.kind) : []
+  const from = kinds.length ? ` · створено: ${[...new Set(kinds)].join(', ')}` : ''
+  return (
+    `  ⇔ ПРОМІЖОК ${sp.px}px (${sp.axis}) між ${side(between[0])} і ${side(between[1])}` +
+    `${from} — предмет ноти порожнеча, не елемент`
+  )
+}
+
 function renderNote(n) {
   const lines = []
   lines.push(`[${n.id}]  ${when(n.createdAt)}${statusLine(n)}`)
   lines.push(`  note:      ${clip(n.note, 1200)}`)
   lines.push(`  url:       ${clip(n.url, 300)}`)
   lines.push(targetLine(n))
+
+  const sp = spacingLine(n)
+  if (sp) lines.push(sp)
 
   /* The element's own text and tag disambiguate the target when the same
      selector matches a family of nodes, and cost one short line. */
@@ -232,7 +254,8 @@ const TOOLS = [
       'untaken ones (marked "new") and any note already taken by an agent (marked ' +
       '"IN PROGRESS"). Returns a compact human-readable summary per note: id, age, url, ' +
       'selector (or DOM path when no stable selector exists), the note text, the component ' +
-      'chain, and the conversation so far. This is normally all you need to start a fix — ' +
+      'chain, a "ПРОМІЖОК" line when the subject of the note is the empty space next to an ' +
+      'element rather than the element itself, and the conversation so far. This is normally all you need to start a fix — ' +
       'do not follow it with notes_get unless you specifically need a field it does not ' +
       'show. Pick a note marked "new", then call notes_start on it before anything else.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },

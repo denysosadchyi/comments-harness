@@ -94,6 +94,10 @@ type Note = {
      блока — це сотні кілобайтів. Поле необовʼязкове, бо нота, створена до
      появи знімків, його просто не має. */
   shot?: string | null
+  /* Є ЛИШЕ в ноті про проміжок — див. contract.md, «Відступ як предмет ноти».
+     У звичайній ноті поля немає взагалі, а не `null`: наявність поля і є
+     ознакою того, що предмет ноти — порожнеча, а не блок. */
+  spacing?: Spacing | null
 }
 
 /* What one click on the page yields, before the note text is typed. */
@@ -106,6 +110,9 @@ type Capture = {
   outerHTML: string
   rect: Rect
   components: string[]
+  /* Те саме правило, що й у `Note`: поле або є (клікнули в порожнечу), або
+     його немає взагалі (клікнули в блок). */
+  spacing?: Spacing
 }
 
 /* Limits from the contract's table. Truncation is the OVERLAY's job — the
@@ -389,6 +396,363 @@ function capture(el: Element): Capture {
   }
 }
 
+/* Короткий підпис елемента для прицілу: тег плюс до двох осмислених класів.
+   Рівно те, що видно на бейджі під час наведення, і нічого більше — довший
+   рядок там не читають, його читають у композері. */
+function describe(el: Element): string {
+  const cls = classList(el)
+    .filter((c) => classKind(c) !== 'reject')
+    .slice(0, 2)
+  return el.tagName.toLowerCase() + cls.map((c) => `.${c}`).join('')
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Проміжок як предмет ноти.
+
+   Половина зауважень про верстку — не про елемент, а про порожнечу біля
+   нього: «зменшити відступ тут». Досі нота показувала виконавцю елемент, і
+   той мусив гадати, що саме створює порожнечу: `margin` сусіда, `padding`
+   батька чи `gap` контейнера. Гадання дороге — трьома різними правками можна
+   дістати однаковий вигляд на цьому екрані й три різні наслідки на сусідніх.
+
+   Окремого режиму-перемикача немає навмисно. Проміжок — це коли курсор над
+   предком, але не над жодним його дитям, а `elementFromPoint` у такому разі
+   й так повертає предка. Тобто ситуація впізнається сама, і користувачу не
+   треба памʼятати, у якому він режимі; він просто наводить на порожнечу і
+   бачить, що під прицілом порожнеча.
+
+   Оверлей НЕ вибирає одне «правильне» джерело. Він перелічує всі знайдені,
+   від найімовірнішого, і рішення лишає виконавцю, який дивиться на код:
+   `gap: 24px` на контейнері й `margin-bottom: 24px` на картці дають однакову
+   картинку тут і різну на сусідньому екрані.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+type SpacingAxis = 'block' | 'inline'
+type SpacingSource = {
+  kind: 'gap' | 'margin' | 'padding'
+  /* Селектор носія декларації — контейнера для gap/padding, сусіда для margin.
+     `null`, коли унікального селектора не вийшло, як і всюди в цій ноті. */
+  selector: string | null
+  property: string
+  value: string
+}
+type Spacing = {
+  px: number
+  axis: SpacingAxis
+  /* Сусіди, між якими лежить порожнеча. На кромці контейнера один із них
+     `null` — там сусіда просто немає, і це саме та ознака, за якою до джерел
+     додається `padding`. */
+  between: [string | null, string | null]
+  sources: SpacingSource[]
+}
+
+/* Прямокутник, зайнятий чимось непорожнім. `el` = null для рядка тексту:
+   текстовий вузол теж заповнює місце, і порожнечею його вважати не можна,
+   але власного селектора в нього немає й margin він не має. */
+type Box = { el: Element | null; left: number; top: number; right: number; bottom: number }
+
+/* Абсолют і fixed виймаються з потоку: вони не розсувають сусідів і не
+   створюють того проміжку, про який питає користувач. Якщо курсор стоїть
+   над таким елементом — це вже не порожнеча, і перевірка перекриття нижче
+   його ловить окремо. */
+const OUT_OF_FLOW = new Set(['absolute', 'fixed'])
+
+const pxOf = (v: string) => parseFloat(v) || 0
+
+function occupied(container: Element): Box[] {
+  const out: Box[] = []
+  for (const node of Array.from(container.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as Element
+      const cs = getComputedStyle(el)
+      if (cs.display === 'none' || OUT_OF_FLOW.has(cs.position)) continue
+      const r = el.getBoundingClientRect()
+      if (r.width <= 0 && r.height <= 0) continue
+      out.push({ el, left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+    } else if (node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim()) {
+      /* Рядок за рядком, а не одним прямокутником: у тексті з переносом
+         прямокутник на весь абзац накрив би й порожнечу праворуч від
+         короткого останнього рядка. */
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      for (const r of Array.from(range.getClientRects())) {
+        if (r.width <= 0 && r.height <= 0) continue
+        out.push({ el: null, left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+      }
+    }
+  }
+  return out
+}
+
+/* Внутрішня кромка контейнера — по padding-box, не по border-box: бордюр це
+   не відступ, і мірятись від нього означало б додати до порожнечі товщину
+   рамки. */
+function paddingBox(el: Element) {
+  const r = el.getBoundingClientRect()
+  const cs = getComputedStyle(el)
+  return {
+    left: r.left + pxOf(cs.borderLeftWidth),
+    top: r.top + pxOf(cs.borderTopWidth),
+    right: r.right - pxOf(cs.borderRightWidth),
+    bottom: r.bottom - pxOf(cs.borderBottomWidth),
+  }
+}
+
+type Scan = {
+  before: Box | null
+  after: Box | null
+  /* Уздовж виміряної осі: де порожнеча починається і де закінчується. */
+  start: number
+  end: number
+  /* Упоперек: наскільки широка смуга, яку варто підсвітити. */
+  from: number
+  to: number
+}
+
+/* Одновимірний прохід: беремо лише ті зайняті прямокутники, що стоять у тій
+   самій смузі, що й курсор (перекриваються з ним по перпендикулярній осі), і
+   шукаємо найближчий перед точкою й найближчий після. Немає сусіда з якогось
+   боку — межею стає кромка контейнера, і саме це потім робить `padding`
+   джерелом.
+
+   Чому смуга, а не всі діти підряд: у флексовому рядку між двома колонками
+   немає нічого, що стоїть на тій же горизонталі, тож вертикальний прохід
+   там не знайде сусідів і чесно скаже «тут нічого не міряється» — на цьому
+   й будується вибір осі нижче. */
+function scanAxis(axis: SpacingAxis, boxes: Box[], pad: ReturnType<typeof paddingBox>, x: number, y: number): Scan | null {
+  const vertical = axis === 'block'
+  const a0 = (b: Box) => (vertical ? b.top : b.left)
+  const a1 = (b: Box) => (vertical ? b.bottom : b.right)
+  const c0 = (b: Box) => (vertical ? b.left : b.top)
+  const c1 = (b: Box) => (vertical ? b.right : b.bottom)
+  const p = vertical ? y : x
+  const q = vertical ? x : y
+  const padA0 = vertical ? pad.top : pad.left
+  const padA1 = vertical ? pad.bottom : pad.right
+  const padC0 = vertical ? pad.left : pad.top
+  const padC1 = vertical ? pad.right : pad.bottom
+
+  let before: Box | null = null
+  let after: Box | null = null
+  for (const b of boxes) {
+    if (c1(b) < q || c0(b) > q) continue
+    if (a1(b) <= p && (!before || a1(b) > a1(before))) before = b
+    if (a0(b) >= p && (!after || a0(b) < a0(after))) after = b
+  }
+
+  const start = before ? a1(before) : padA0
+  const end = after ? a0(after) : padA1
+  if (!(end > start) || p < start || p > end) return null
+
+  /* Смуга завширшки рівно з тим, що вона розділяє: підсвічувати всю ширину
+     контейнера означало б показати не той проміжок, який людина бачить. */
+  let from = padC0
+  let to = padC1
+  const parts = [before, after].filter((b): b is Box => b !== null)
+  if (parts.length) {
+    from = Math.max(padC0, Math.min(...parts.map(c0)))
+    to = Math.min(padC1, Math.max(...parts.map(c1)))
+    if (!(to > from)) {
+      from = padC0
+      to = padC1
+    }
+  }
+  return { before, after, start, end, from, to }
+}
+
+/* Джерела — у порядку зі спеки: gap, потім margin сусідів, потім padding
+   контейнера. Усередині цього порядку наперед виноситься те, чиє значення
+   збігається з виміряною порожнечею: якщо `row-gap: 24px` і порожнеча 24px,
+   це майже напевно він, а `margin-bottom: 16px` під ним — просто ще одна
+   декларація, яку виконавцю варто побачити перед правкою.
+
+   `deep` вимикає побудову селекторів: під час наведення ця функція працює на
+   кожному русі миші, а `buildSelector` ходить у `querySelectorAll` по всьому
+   документу. Прицілу селектори не потрібні — він показує лише властивість. */
+function spacingSources(
+  container: Element,
+  cs: CSSStyleDeclaration,
+  axis: SpacingAxis,
+  scan: Scan,
+  px: number,
+  deep: boolean,
+): SpacingSource[] {
+  const sel = (el: Element | null): string | null => {
+    if (!deep || !el) return null
+    const s = buildSelector(el)
+    return s === null ? null : cut(s, MAX_MISC)
+  }
+  const own = sel(container)
+  const vertical = axis === 'block'
+  const out: SpacingSource[] = []
+
+  /* 1. gap — тільки коли контейнер справді flex/grid І порожнеча лежить МІЖ
+     двома дітьми: до кромки контейнера жоден gap не доїжджає. */
+  if (/(flex|grid)/.test(cs.display) && scan.before && scan.after) {
+    const raw = vertical ? cs.rowGap : cs.columnGap
+    if (pxOf(raw) > 0) {
+      out.push({ kind: 'gap', selector: own, property: vertical ? 'row-gap' : 'column-gap', value: raw })
+    }
+  }
+
+  /* 2. margin сусідів. Порядок між ними — за спаданням значення, і це не
+     косметика: у звичайному потоці сусідні margin СХЛОПУЮТЬСЯ, тобто працює
+     більший, а не сума. Тож зверху стоїть той, що реально тримає порожнечу,
+     а другий лишається в списку, бо після правки першого він стане чинним.
+     У flex/grid схлопування немає — там вони додаються до gap, і список
+     читається просто як перелік доданків. */
+  const margins: SpacingSource[] = []
+  const marginEdges: [Box | null, 'marginBottom' | 'marginTop' | 'marginRight' | 'marginLeft', string][] = vertical
+    ? [
+        [scan.before, 'marginBottom', 'margin-bottom'],
+        [scan.after, 'marginTop', 'margin-top'],
+      ]
+    : [
+        [scan.before, 'marginRight', 'margin-right'],
+        [scan.after, 'marginLeft', 'margin-left'],
+      ]
+  for (const [box, camel, kebab] of marginEdges) {
+    if (!box?.el) continue
+    const value = getComputedStyle(box.el)[camel]
+    if (pxOf(value) > 0) margins.push({ kind: 'margin', selector: sel(box.el), property: kebab, value })
+  }
+  margins.sort((a, b) => pxOf(b.value) - pxOf(a.value))
+  out.push(...margins)
+
+  /* 3. padding контейнера — рівно на тій кромці, де сусіда немає. */
+  const paddingEdges: [boolean, 'paddingTop' | 'paddingBottom' | 'paddingLeft' | 'paddingRight', string][] = vertical
+    ? [
+        [!scan.before, 'paddingTop', 'padding-top'],
+        [!scan.after, 'paddingBottom', 'padding-bottom'],
+      ]
+    : [
+        [!scan.before, 'paddingLeft', 'padding-left'],
+        [!scan.after, 'paddingRight', 'padding-right'],
+      ]
+  for (const [atEdge, camel, kebab] of paddingEdges) {
+    if (!atEdge) continue
+    const value = cs[camel]
+    if (pxOf(value) > 0) out.push({ kind: 'padding', selector: own, property: kebab, value })
+  }
+
+  const exact = (s: SpacingSource) => Math.abs(pxOf(s.value) - px) < 0.5
+  return [...out.filter(exact), ...out.filter((s) => !exact(s))]
+}
+
+type Gap = {
+  /* Сама порожнеча у координатах вʼюпорта — це і підсвітка, і `rect` ноти. */
+  rect: Rect
+  /* Порожнеча РАЗОМ із сусідами: кадр, у якому видно саму лише дірку, не
+     пояснює нічого — дірка виглядає однаково завжди. */
+  context: Rect
+  spacing: Spacing
+}
+
+/* Головна функція режиму. Повертає `null`, коли під точкою не порожнеча, і
+   тоді все працює рівно як досі. */
+function measureGap(container: Element, x: number, y: number, deep: boolean): Gap | null {
+  const cs = getComputedStyle(container)
+  const pad = paddingBox(container)
+  /* Смуга бордюра — не проміжок: там правиться `border-width`, і плутати ці
+     дві речі означало б віддати виконавцю неправдиве джерело. */
+  if (x < pad.left || x > pad.right || y < pad.top || y > pad.bottom) return null
+
+  const boxes = occupied(container)
+  /* Контейнер без вмісту — це порожній блок, а не проміжок у ньому: міряти
+     нема між чим, і нота має бути звичайною. */
+  if (!boxes.length) return null
+  /* Перевірка суворіша за `elementFromPoint`: дитя з `pointer-events: none`
+     хіт-тест пропускає, але місце воно займає, і порожнечею воно не є. */
+  for (const b of boxes) {
+    if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return null
+  }
+
+  const block = scanAxis('block', boxes, pad, x, y)
+  const inline = scanAxis('inline', boxes, pad, x, y)
+  /* Вісь обирає не налаштування контейнера, а те, що насправді стоїть навколо
+     точки: виграє прохід, який знайшов більше сусідів, а за рівності — той,
+     що намиряв менше. Стос блоків дає сусідів лише по вертикалі, флексовий
+     рядок — лише по горизонталі, тож у типових випадках вибір однозначний.
+     На перехресті рядкового й колонкового gap у гріді сусідів немає в обох
+     проходах — тоді виграє коротший вимір, і це визнана неточність, а не
+     здогадка про наміри розмітки. */
+  const weight = (s: Scan | null) => (s ? (s.before ? 1 : 0) + (s.after ? 1 : 0) : -1)
+  let axis: SpacingAxis = 'block'
+  let scan = block
+  if (
+    weight(inline) > weight(block) ||
+    (weight(inline) === weight(block) && block && inline && inline.end - inline.start < block.end - block.start)
+  ) {
+    axis = 'inline'
+    scan = inline
+  }
+  if (!scan) return null
+
+  const px = Math.round(scan.end - scan.start)
+  if (px < 1) return null
+
+  const rect: Rect =
+    axis === 'block'
+      ? { x: scan.from, y: scan.start, w: scan.to - scan.from, h: scan.end - scan.start }
+      : { x: scan.start, y: scan.from, w: scan.end - scan.start, h: scan.to - scan.from }
+
+  let left = rect.x
+  let top = rect.y
+  let right = rect.x + rect.w
+  let bottom = rect.y + rect.h
+  for (const b of [scan.before, scan.after]) {
+    if (!b) continue
+    left = Math.min(left, b.left)
+    top = Math.min(top, b.top)
+    right = Math.max(right, b.right)
+    bottom = Math.max(bottom, b.bottom)
+  }
+
+  const selOf = (b: Box | null): string | null => {
+    if (!deep || !b?.el) return null
+    const s = buildSelector(b.el)
+    return s === null ? null : cut(s, MAX_MISC)
+  }
+
+  return {
+    rect,
+    context: { x: left, y: top, w: right - left, h: bottom - top },
+    spacing: {
+      px,
+      axis,
+      between: [selOf(scan.before), selOf(scan.after)],
+      sources: spacingSources(container, cs, axis, scan, px, deep),
+    },
+  }
+}
+
+/* Нота про проміжок — це нота про КОНТЕЙНЕР, у якого `rect` описує порожнечу,
+   а не сам контейнер. Так вимагає контракт, і так воно й правильно: селектор
+   мусить вести в код, а в коді порожнечі немає — є декларація на елементі. */
+function captureGap(container: Element, gap: Gap): Capture {
+  return {
+    ...capture(container),
+    rect: {
+      x: Math.round(gap.rect.x),
+      y: Math.round(gap.rect.y),
+      w: Math.round(gap.rect.w),
+      h: Math.round(gap.rect.h),
+    },
+    spacing: gap.spacing,
+  }
+}
+
+/* Одна фраза, яка каже, ЩО саме анотовано — і в композері, і в треді. Осьова
+   лексика тут не прикраса: «24px above .card» і «24px left of .card» це два
+   різні дефекти, і плутати їх у брифі агента дорого. */
+function spacingPhrase(s: Spacing): string {
+  const [a, b] = s.between
+  if (a && b) return `${s.px}px between ${a} and ${b}`
+  if (b) return s.axis === 'block' ? `${s.px}px above ${b}` : `${s.px}px left of ${b}`
+  if (a) return s.axis === 'block' ? `${s.px}px below ${a}` : `${s.px}px right of ${a}`
+  return s.axis === 'block' ? `${s.px}px of vertical space` : `${s.px}px of horizontal space`
+}
+
 /* ── Кадр анотованого блока ───────────────────────────────────────────────
    `outerHTML` показує розмітку й не показує СПІВВІДНОШЕНЬ: відступу, збитої
    кромки, переносу, іконки, що сидить не на тій лінії. Саме через це
@@ -403,6 +767,11 @@ function capture(el: Element): Capture {
    не щохвилини. */
 
 const SHOT_PAD = 24
+/* Для проміжку поле навколо ширше. Субʼєкт тут — порожнеча, і сама по собі
+   вона в кадрі не читається взагалі: порожнє місце виглядає однаково завжди.
+   Пояснює його рівно оточення, тож рамка бере сусідів (див. `Gap.context`) і
+   ще вдвічі більше повітря, щоб було видно, з чим цей проміжок порівнювати. */
+const SHOT_PAD_GAP = 48
 const SHOT_MAX_WIDTH = 1400
 const SHOT_MAX_SCALE = 2
 /* `MAX_SHOT` сервера — 4 МБ. Перевірка тут, щоб не гнати по мережі те, що
@@ -430,13 +799,22 @@ function shotSubject(el: Element): Element {
 }
 
 /* Поле навколо — і обрізка вʼюпортом: те, що за краєм екрана, браузер не
-   малював, і в кадрі воно вийшло б смугою тла. */
-function shotFrame(el: Element): { left: number; top: number; w: number; h: number } {
-  const r = shotSubject(el).getBoundingClientRect()
-  const left = Math.max(0, Math.floor(r.left - SHOT_PAD))
-  const top = Math.max(0, Math.floor(r.top - SHOT_PAD))
-  const right = Math.min(window.innerWidth, Math.ceil(r.right + SHOT_PAD))
-  const bottom = Math.min(window.innerHeight, Math.ceil(r.bottom + SHOT_PAD))
+   малював, і в кадрі воно вийшло б смугою тла.
+
+   Субʼєктом може бути не лише елемент: у ноті про проміжок це прямокутник
+   порожнечі разом із сусідами, у якого власного вузла в DOM немає. Тому на
+   вході або елемент (тоді працює правило «вузьке знімаємо з батьком»), або
+   вже готовий прямокутник. */
+function shotFrame(subject: Element | Rect): { left: number; top: number; w: number; h: number } {
+  const isEl = subject instanceof Element
+  const pad = isEl ? SHOT_PAD : SHOT_PAD_GAP
+  const r = isEl
+    ? shotSubject(subject).getBoundingClientRect()
+    : { left: subject.x, top: subject.y, right: subject.x + subject.w, bottom: subject.y + subject.h }
+  const left = Math.max(0, Math.floor(r.left - pad))
+  const top = Math.max(0, Math.floor(r.top - pad))
+  const right = Math.min(window.innerWidth, Math.ceil(r.right + pad))
+  const bottom = Math.min(window.innerHeight, Math.ceil(r.bottom + pad))
   return { left, top, w: right - left, h: bottom - top }
 }
 
@@ -498,8 +876,8 @@ function showHost(host: HTMLElement) {
   if (shotHides === 0) host.style.removeProperty('display')
 }
 
-async function takeShot(el: Element, host: HTMLElement): Promise<{ blob: Blob; url: string }> {
-  const frame = shotFrame(el)
+async function takeShot(subject: Element | Rect, host: HTMLElement): Promise<{ blob: Blob; url: string }> {
+  const frame = shotFrame(subject)
   if (frame.w < 1 || frame.h < 1) throw new Error('element has no visible box')
 
   const { default: html2canvas } = await import('./vendor/html2canvas-pro.esm.js')
@@ -618,6 +996,46 @@ function AskedChip() {
     <span className="smn-state smn-state--asked">
       <span className="smn-mark" aria-hidden="true" />
       agent asked
+    </span>
+  )
+}
+
+/* Смуга виміру. Одна й та сама і під прицілом, і поки пишеться нота: предмет
+   не змінюється від того, що відкрився композер, і малювати його двома
+   способами означало б натякнути, що змінюється. */
+function GapBand({ box, spacing, tag }: { box: Anchor; spacing: Spacing; tag?: string }) {
+  const primary = spacing.sources[0]
+  return (
+    <div
+      className={`smn-gap smn-gap--${spacing.axis}`}
+      style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+    >
+      {tag && (
+        <span className={`smn-aim__tag smn-aim__tag--quiet${box.y < 24 ? ' smn-aim__tag--below' : ''}`}>{tag}</span>
+      )}
+      <span className="smn-gap__val">
+        {spacing.px}px{primary && <em>{primary.property}</em>}
+      </span>
+    </div>
+  )
+}
+
+/* Що саме анотовано — фразою й переліком джерел. Той самий блок у композері
+   (нота ще пишеться) і в треді (нота вже є): читач в обох випадках має
+   зрозуміти, що предмет тут порожнеча, і не сплутати її з контейнером. */
+function SpacingTarget({ spacing }: { spacing: Spacing }) {
+  return (
+    <span className="smn-gap__sum">
+      <b>{spacingPhrase(spacing)}</b>
+      {spacing.sources.map((s, i) => (
+        <span key={`${s.property}-${i}`} className="smn-chain">
+          {s.property} {s.value}
+          {s.selector ? ` — ${s.selector}` : ''}
+        </span>
+      ))}
+      {spacing.sources.length === 0 && (
+        <span className="smn-chain">no gap, margin or padding here — the container's alignment makes it</span>
+      )}
     </span>
   )
 }
@@ -847,6 +1265,76 @@ const CSS_TEXT = `
   border-width: 2px;
   box-shadow: 0 0 0 1px var(--bg-raised);
 }
+
+/* ── Проміжок під прицілом ────────────────────────────────────────────────
+   Блок і порожнеча між блоками — два різні предмети ноти, і сплутати їх
+   дорого: «зменши тут» про картку і про дірку між картками правляться
+   різними деклараціями. Тому підсвітка проміжку не має з прицільною рамкою
+   жодної спільної риси, окрім того, що лежить на тому самому місці:
+
+     — замість заливки штриховка, бо штрихують те, чого немає;
+     — замість рамки по периметру дві риски на кромках виміру, як у
+       кресленні: показано не предмет, а відстань;
+     — і жодної хроми. Синій в оверлеї означає «твій хід», зелений — «полагоджено,
+       глянь»; проміжок не вимагає від користувача нічого, тож колір йому
+       був би брехнею. Форми тут вистачає з запасом.
+
+   Кольори штриховки НЕ залежать від теми оверлея, і це навмисно: смуга лежить
+   на ЧУЖІЙ сторінці, а тема тулзи нічого не каже про те, світлий чи темний під
+   нею ґрунт. Тому пара: світла підкладка, що піднімає смугу на темному, і
+   темні штрихи, що ловляться на світлому. Одне з двох працює завжди. */
+.smn-gap {
+  position: fixed;
+  pointer-events: none;
+  background-color: oklch(1 0 0 / 0.24);
+  background-image: repeating-linear-gradient(45deg,
+    oklch(0.18 0.02 265 / 0.32) 0 2px, transparent 2px 5px);
+}
+/* Кромки виміру. Вони ж рятують випадок, коли порожнеча в кілька пікселів і
+   штриховці просто немає де проявитись: дві риски на 3px дірці зливаються в
+   одну виразну лінію, і проміжок усе одно видно. */
+.smn-gap::before, .smn-gap::after {
+  content: '';
+  position: absolute;
+  background: oklch(0.58 0.02 265);
+}
+.smn-gap--block::before, .smn-gap--block::after { left: 0; right: 0; height: 1px; }
+.smn-gap--block::before { top: 0 }
+.smn-gap--block::after  { bottom: 0 }
+.smn-gap--inline::before, .smn-gap--inline::after { top: 0; bottom: 0; width: 1px; }
+.smn-gap--inline::before { left: 0 }
+.smn-gap--inline::after  { right: 0 }
+
+/* Виміряне значення — по центру смуги, і навмисно БІЛЬШЕ за неї: 4px дірка
+   не має де вмістити підпис, а число потрібне саме на такій. Поруч, тихішим
+   чорнилом, найімовірніше джерело — рівно одне слово, бо тут потрібен один
+   погляд; повний перелік чекає в композері, де нота і складається. */
+.smn-gap__val {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font: 600 10.5px/1.6 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+}
+.smn-gap__val em { font-style: normal; font-weight: 500; color: var(--muted); }
+/* Той самий бейдж контейнера, що й у прицілу, але без синього: у смузі колір
+   уже сказав би те, чого немає. */
+.smn-aim__tag--quiet {
+  border: 1px solid var(--line-strong);
+  background: var(--bg-raised);
+  color: var(--ink-2);
+}
 /* Keycaps: used by the list panel's offline state, which spells out the
    command that starts the server. */
 .smn-kbd {
@@ -1075,6 +1563,15 @@ const CSS_TEXT = `
   overflow-wrap: anywhere;
 }
 .smn-target--none { color: var(--muted); }
+/* Рядок «що саме анотовано» для ноти про проміжок. Стоїть НАД селектором
+   контейнера, бо предмет тут порожнеча, а контейнер — лише її адреса; якби
+   першим ішов селектор, нота читалась би як нота про контейнер. */
+.smn-gap__sum {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+}
+.smn-gap__sum b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .smn-chain {
   display: block;
   margin-top: 3px;
@@ -1326,11 +1823,27 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
   const [aiming, setAiming] = useState(false)
   const [hover, setHover] = useState<Anchor | null>(null)
   const [hoverTag, setHoverTag] = useState('')
+  /* Не `null` = під курсором зараз порожнеча, а не блок. Тримається окремо
+     від `hover`, бо прямокутник у них спільний (де малювати), а от що саме
+     малювати — рамку чи смугу виміру — вирішує саме це поле. */
+  const [hoverGap, setHoverGap] = useState<Gap | null>(null)
 
   /* Чернетка тримає й сам елемент, а не лише його прямокутник: композер стоїть
      по центру, тож підсвітка лишилась єдиним показником «про що ця нота», і
-     її треба переміряти на скролі й ресайзі — а для цього потрібен вузол. */
-  const [draft, setDraft] = useState<{ capture: Capture; el: Element; anchor: Anchor } | null>(null)
+     її треба переміряти на скролі й ресайзі — а для цього потрібен вузол.
+
+     `gapRel` є лише в чернетці про проміжок. Порожнеча власного вузла не має,
+     тож переміряти її на скролі можна тільки заново — від контейнера й точки
+     всередині нього, збереженої у ЙОГО координатах. Ширина й висота лежать
+     поруч як остача: якщо після ресайзу проміжку в цьому місці вже немає
+     (розмітка перебудувалась), смуга просто їде за контейнером, а не зникає
+     й не стрибає в кут екрана. */
+  const [draft, setDraft] = useState<{
+    capture: Capture
+    el: Element
+    anchor: Anchor
+    gapRel: { x: number; y: number; w: number; h: number; cx: number; cy: number } | null
+  } | null>(null)
   /* Кадр живе поруч із чернеткою, а не всередині неї: зйомка асинхронна й
      завершується вже після того, як поповер відкрито. */
   const [shot, setShot] = useState<Shot | null>(null)
@@ -1363,6 +1876,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     setOpenId(null)
     setAiming(false)
     setHover(null)
+    setHoverGap(null)
   }
 
   /* ── The shadow host ────────────────────────────────────────────────────
@@ -1475,6 +1989,22 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
   const done = useMemo(() => pageNotes.filter((n) => n.status === 'resolved').length, [pageNotes])
   const openNote = useMemo(() => pageNotes.find((n) => n.id === openId) ?? null, [pageNotes, openId])
 
+  /* ── Коли кнопки списку немає взагалі ──────────────────────────────────
+     Порожній список нема чого відкривати, а «0» на смужці — шум, який щоразу
+     повідомляє, що нічого не сталось. Тому при нулі зникає САМА кнопка, а не
+     лише її число.
+
+     Виняток — сервер не відповідає. Тоді нот теж нуль, але причина інша, і
+     панель списку лишається єдиним місцем, де про це взагалі написано; забрати
+     кнопку означало б сховати єдину діагностику разом із порожнечею.
+
+     Розпірки на місці кнопки навмисно немає (щойно такі прибирали). Замість
+     неї — порядок: кнопка списку стоїть ПЕРШОЮ, а смужка притиснута до
+     правого краю, тож її поява й зникнення рухають лише власний лівий край
+     смужки. Приціл і тема при цьому не змінюють екранної позиції ні на
+     піксель — а саме на них лягає мʼязова памʼять. */
+  const showList = offline || pageNotes.length > 0
+
   /* ── Pin geometry ──────────────────────────────────────────────────────
      Recomputed on scroll and resize, rAF-throttled. Elements that no longer
      resolve simply get no pin; the list still shows the note and says so. */
@@ -1511,13 +2041,27 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
      їде, тож без цього підсвітка відклеїлась би від свого елемента при
      першому ж скролі. */
   const draftEl = draft?.el ?? null
+  const draftRel = draft?.gapRel ?? null
   useEffect(() => {
     if (!draftEl) return
     let frame = 0
     const measure = () => {
       frame = 0
       const r = draftEl.getBoundingClientRect()
-      setDraft((cur) => (cur && cur.el === draftEl ? { ...cur, anchor: { x: r.left, y: r.top, w: r.width, h: r.height } } : cur))
+      let next: Anchor
+      if (draftRel) {
+        /* Порожнечу переміряємо тією самою функцією, що й при наведенні —
+           другого алгоритму тут не заводиться. Точка береться з памʼяті у
+           координатах контейнера, тож після скролу вона потрапляє туди ж, де
+           стояв курсор при кліку. */
+        const g = measureGap(draftEl, r.left + draftRel.cx, r.top + draftRel.cy, false)
+        next = g
+          ? { x: g.rect.x, y: g.rect.y, w: g.rect.w, h: g.rect.h }
+          : { x: r.left + draftRel.x, y: r.top + draftRel.y, w: draftRel.w, h: draftRel.h }
+      } else {
+        next = { x: r.left, y: r.top, w: r.width, h: r.height }
+      }
+      setDraft((cur) => (cur && cur.el === draftEl ? { ...cur, anchor: next } : cur))
     }
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure)
@@ -1529,7 +2073,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       window.removeEventListener('scroll', schedule, true)
       window.removeEventListener('resize', schedule)
     }
-  }, [draftEl])
+  }, [draftEl, draftRel])
 
   /* ── Aim mode ──────────────────────────────────────────────────────────
      Listeners live on the document in the CAPTURE phase, not on a full-screen
@@ -1543,10 +2087,18 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     const track = (e: MouseEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY)
       if (!el || host.contains(el) || el === document.documentElement) return
+      /* Дешевий прохід: селектори тут не будуються (`deep: false`), бо це
+         рух миші, а `buildSelector` ходить по всьому документу. Прицілу
+         досить властивості й числа. */
+      const gap = measureGap(el, e.clientX, e.clientY, false)
       const r = el.getBoundingClientRect()
-      setHover({ x: r.left, y: r.top, w: r.width, h: r.height })
-      const cls = classList(el).filter((c) => classKind(c) !== 'reject').slice(0, 2)
-      setHoverTag(el.tagName.toLowerCase() + cls.map((c) => `.${c}`).join(''))
+      setHover(
+        gap
+          ? { x: gap.rect.x, y: gap.rect.y, w: gap.rect.w, h: gap.rect.h }
+          : { x: r.left, y: r.top, w: r.width, h: r.height },
+      )
+      setHoverGap(gap)
+      setHoverTag(describe(el))
     }
 
     const pick = (e: MouseEvent) => {
@@ -1555,10 +2107,30 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       e.preventDefault()
       e.stopPropagation()
       const r = el.getBoundingClientRect()
-      setDraft({ capture: capture(el), el, anchor: { x: r.left, y: r.top, w: r.width, h: r.height } })
+      /* А тут — повний прохід: селектори сусідів і носіїв декларацій це те,
+         заради чого нота про проміжок узагалі існує. */
+      const gap = measureGap(el, e.clientX, e.clientY, true)
+      setDraft({
+        capture: gap ? captureGap(el, gap) : capture(el),
+        el,
+        anchor: gap
+          ? { x: gap.rect.x, y: gap.rect.y, w: gap.rect.w, h: gap.rect.h }
+          : { x: r.left, y: r.top, w: r.width, h: r.height },
+        gapRel: gap
+          ? {
+              x: gap.rect.x - r.left,
+              y: gap.rect.y - r.top,
+              w: gap.rect.w,
+              h: gap.rect.h,
+              cx: gap.rect.x + gap.rect.w / 2 - r.left,
+              cy: gap.rect.y + gap.rect.h / 2 - r.top,
+            }
+          : null,
+      })
       setOpenId(null)
       setAiming(false)
       setHover(null)
+      setHoverGap(null)
 
       /* Кадр знімається в мить кліку, а не при відправці: до моменту, коли
          користувач допише текст, сторінка вже могла доїхати анімацію, згорнути
@@ -1568,7 +2140,10 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       setShot({ status: 'taking' })
       const run = shotRun.current + 1
       shotRun.current = run
-      shotJob.current = takeShot(el, host).then(
+      /* Субʼєкт кадру для проміжку — не контейнер, а сама порожнеча РАЗОМ із
+         сусідами: контейнером тут часто виявляється пів сторінки, а дірка сама
+         по собі в кадрі не читається. */
+      shotJob.current = takeShot(gap ? gap.context : el, host).then(
         (ready) => {
           /* Чужий номер означає, що чернетки вже немає (скасування, зміна
              роуту, анмаунт) — прев'ю нікому показувати, тож URL відкликається
@@ -1618,6 +2193,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       if (e.key === 'Escape') {
         setAiming(false)
         setHover(null)
+        setHoverGap(null)
         closeDraft()
         setOpenId(null)
         return
@@ -1631,12 +2207,17 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
         setAiming((v) => !v)
       } else if (k === 'n') {
         e.preventDefault()
-        setListOpen((v) => !v)
+        /* Хоткей робить рівно те, що кнопка, і зникає разом із нею: панель,
+           яку не можна відкрити мишею, але можна клавішею, — це другий,
+           непомітний стан тулзи. Уже відкриту панель Alt+N закриває завжди,
+           бо інакше остання нота, видалена при відкритій панелі, замкнула б
+           її на екрані до Esc. */
+        setListOpen((v) => (v ? false : showList))
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [closeDraft])
+  }, [closeDraft, showList])
 
   const toggleTheme = useCallback(() => {
     setTheme((t) => {
@@ -1688,6 +2269,11 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
         outerHTML: c.outerHTML,
         rect: c.rect,
         components: c.components.slice(0, MAX_COMPONENTS),
+        /* Поля або немає, або воно повне — проміжного стану контракт не знає.
+           Розсипати `spacing: null` у звичайні ноти означало б навчити читачів
+           перевіряти його на кожній, і ознака «це нота про порожнечу» перестала
+           б бути ознакою. */
+        ...(c.spacing ? { spacing: c.spacing } : {}),
       }
       const res = await fetch(`${endpoint}/notes`, {
         method: 'POST',
@@ -1760,19 +2346,28 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     <>
       <style>{CSS_TEXT}</style>
       <div className="smn" data-theme={theme}>
-        {aiming && hover && (
-          <div className="smn-aim" style={{ left: hover.x, top: hover.y, width: hover.w, height: hover.h }}>
-            <span className={`smn-aim__tag${hover.y < 24 ? ' smn-aim__tag--below' : ''}`}>{hoverTag}</span>
-          </div>
-        )}
-        {/* Поки пишеться нота, обраний елемент лишається обведеним: коробка
-            відʼїхала в центр, і без обведення нічого не каже, про що вона. */}
-        {draft && (
-          <div
-            className="smn-aim smn-aim--subject"
-            style={{ left: draft.anchor.x, top: draft.anchor.y, width: draft.anchor.w, height: draft.anchor.h }}
-          />
-        )}
+        {aiming &&
+          hover &&
+          (hoverGap ? (
+            <GapBand box={hover} spacing={hoverGap.spacing} tag={hoverTag} />
+          ) : (
+            <div className="smn-aim" style={{ left: hover.x, top: hover.y, width: hover.w, height: hover.h }}>
+              <span className={`smn-aim__tag${hover.y < 24 ? ' smn-aim__tag--below' : ''}`}>{hoverTag}</span>
+            </div>
+          ))}
+        {/* Поки пишеться нота, обраний предмет лишається підсвіченим: коробка
+            відʼїхала в центр, і без підсвітки нічого не каже, про що вона.
+            Смуга виміру тут тим паче обовʼязкова — порожнечу без неї не видно
+            взагалі, а число лишається єдиним, що привʼязує текст до місця. */}
+        {draft &&
+          (draft.capture.spacing ? (
+            <GapBand box={draft.anchor} spacing={draft.capture.spacing} />
+          ) : (
+            <div
+              className="smn-aim smn-aim--subject"
+              style={{ left: draft.anchor.x, top: draft.anchor.y, width: draft.anchor.w, height: draft.anchor.h }}
+            />
+          ))}
         {/* Pins live above the aim outline but below the panels. */}
         {!aiming &&
           pageNotes.map((n) => {
@@ -1868,6 +2463,10 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
                           <span className="smn-row__tail">
                             {shortTime(n.updatedAt)}
                             {' · '}
+                            {/* Нота про проміжок мусить упізнаватись у списку:
+                                інакше «зменшити тут» у переліку виглядає так
+                                само, як нота про блок із тим самим селектором. */}
+                            {n.spacing ? `${n.spacing.px}px space · ` : ''}
                             {n.selector || n.tagName || 'no selector'}
                             {lost ? ' · element not found' : ''}
                           </span>
@@ -1882,6 +2481,40 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
         )}
 
         <div className="smn-bar">
+          {/* Першою й лише за наявності того, що відкривати — див. showList вище. */}
+          {showList && (
+            <>
+              <button
+                type="button"
+                className="smn-btn"
+                aria-pressed={listOpen}
+                title="Notes on this screen (Alt+N)"
+                onClick={() => setListOpen((v) => !v)}
+              >
+                <IconList />
+                <span className="smn-count">
+                  {offline ? (
+                    '—'
+                  ) : (
+                    <>
+                      {pageNotes.length}
+                      {done > 0 && (
+                        <span className="smn-count__part smn-count__part--done" title="Fixed, waiting for your look">
+                          {done}
+                        </span>
+                      )}
+                      {waiting > 0 && (
+                        <span className="smn-count__part smn-count__part--wait" title="Agent asked and is waiting">
+                          {waiting}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </span>
+              </button>
+              <span className="smn-sep" />
+            </>
+          )}
           <button
             type="button"
             className="smn-btn"
@@ -1894,35 +2527,6 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
             }}
           >
             <IconAim />
-          </button>
-          <span className="smn-sep" />
-          <button
-            type="button"
-            className="smn-btn"
-            aria-pressed={listOpen}
-            title="Notes on this screen (Alt+N)"
-            onClick={() => setListOpen((v) => !v)}
-          >
-            <IconList />
-            <span className="smn-count">
-              {offline ? (
-                '—'
-              ) : (
-                <>
-                  {pageNotes.length}
-                  {done > 0 && (
-                    <span className="smn-count__part smn-count__part--done" title="Fixed, waiting for your look">
-                      {done}
-                    </span>
-                  )}
-                  {waiting > 0 && (
-                    <span className="smn-count__part smn-count__part--wait" title="Agent asked and is waiting">
-                      {waiting}
-                    </span>
-                  )}
-                </>
-              )}
-            </span>
           </button>
           <span className="smn-sep" />
           <button
@@ -1991,9 +2595,11 @@ function Composer({
 
   return (
     <div className="smn-center">
-      <div className="smn-pop smn-pop--center" role="dialog" aria-label="New note">
+      <div className="smn-pop smn-pop--center" role="dialog" aria-label={c.spacing ? 'New spacing note' : 'New note'}>
         <div className="smn-head">
-          <span className="smn-title">New note</span>
+          {/* Заголовок називає предмет, а не дію: «нову ноту» користувач і так
+              бачить, а от чи анотує він картку чи дірку між картками — ні. */}
+          <span className="smn-title">{c.spacing ? 'New spacing note' : 'New note'}</span>
           <button type="button" className="smn-x" onClick={onCancel} aria-label="Cancel">
             ✕
           </button>
@@ -2003,6 +2609,7 @@ function Composer({
             краєм коробки на низькому екрані. */}
         <div className="smn-scroll">
           <div className={`smn-target${c.selector ? '' : ' smn-target--none'}`}>
+            {c.spacing && <SpacingTarget spacing={c.spacing} />}
             {c.selector || `${c.tagName} — no unique selector, path only`}
             {c.components.length > 0 && <span className="smn-chain">{c.components.join(' ‹ ')}</span>}
           </div>
@@ -2111,6 +2718,7 @@ function Thread({
         </button>
       </div>
       <div className={`smn-target${note.selector ? '' : ' smn-target--none'}`}>
+        {note.spacing && <SpacingTarget spacing={note.spacing} />}
         {note.selector || note.fullPath}
         {note.components.length > 0 && <span className="smn-chain">{note.components.join(' ‹ ')}</span>}
       </div>

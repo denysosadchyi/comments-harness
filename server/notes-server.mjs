@@ -125,6 +125,16 @@ const MAX_CONTENT = 4000
 const MAX_OUTER_HTML = 2048
 const MAX_TEXT = 300
 const MAX_COMPONENTS = 8
+/* `spacing.sources` — «всі знайдені джерела», а не «одне правильне», тож
+   список за задумом короткий: gap контейнера, margin двох сусідів, padding
+   предка з обох боків — це шість, і дванадцять лишає запас на випадок, коли
+   оверлей знайде і row-, і column-варіант. Довший список означає клієнта, що
+   зсипав туди все підряд, а виконавцю такий перелік уже не допомагає. */
+const MAX_SPACING_SOURCES = 12
+/* Одна CSS-декларація: `padding-inline-start` і `clamp(8px, 2vw, 24px)` тут
+   найдовше, що буває чесного. Селектори всередині `spacing` міряються тією ж
+   міркою, що й `selector` ноти, — MAX_MISC. */
+const MAX_SPACING_DECL = 200
 /* Not in the limits table, but every remaining string field still needs a
    ceiling or MAX_BODY becomes the only bound and a single note can be 128 KB
    of selector. Generous enough that no honest client ever meets it. */
@@ -249,6 +259,69 @@ function badViewport(v) {
   return null
 }
 
+/* `spacing` — нота не про елемент, а про порожнечу біля нього. Поле
+   НЕОБОВʼЯЗКОВЕ й у звичайній ноті відсутнє цілком (не `null`), тому перша
+   гілка тут — «немає, і добре». Але якщо воно приїхало, форму перевіряємо
+   повністю: половина цього поля — це список джерел, за яким виконавець піде
+   правити CSS, і крива стрічка в ньому дорожча за відмову. Причина та сама,
+   що й у решти полів: 400 з текстом, а не тихе відкидання. */
+const SPACING_AXES = ['block', 'inline']
+const SPACING_KINDS = ['gap', 'margin', 'padding']
+
+function badSpacing(sp) {
+  if (sp === undefined || sp === null) return null // optional — звичайна нота
+  if (typeof sp !== 'object' || Array.isArray(sp)) return 'spacing must be an object'
+
+  if (!Number.isFinite(sp.px)) return 'spacing.px must be a number'
+  if (!SPACING_AXES.includes(sp.axis)) {
+    return `spacing.axis must be one of ${SPACING_AXES.join(', ')}`
+  }
+
+  /* Рівно два: проміжок завжди між ДВОМА сусідами, і на кромці контейнера
+     один із них — `null` («далі нічого немає»). Масив іншої довжини — це не
+     проміжок, а щось, чого контракт не описує. */
+  if (!Array.isArray(sp.between) || sp.between.length !== 2) {
+    return 'spacing.between must be an array of exactly two entries'
+  }
+  for (const side of sp.between) {
+    if (side === null) continue
+    if (!isStr(side)) return 'spacing.between entries must be a string or null'
+    if (side.length > MAX_MISC) {
+      return `spacing.between entries must be ≤ ${MAX_MISC} characters`
+    }
+  }
+
+  if (!Array.isArray(sp.sources)) return 'spacing.sources must be an array'
+  if (sp.sources.length > MAX_SPACING_SOURCES) {
+    return `spacing.sources must be ≤ ${MAX_SPACING_SOURCES} entries`
+  }
+  for (const src of sp.sources) {
+    if (!src || typeof src !== 'object' || Array.isArray(src)) {
+      return 'spacing.sources entries must be objects'
+    }
+    if (!SPACING_KINDS.includes(src.kind)) {
+      return `spacing.sources[].kind must be one of ${SPACING_KINDS.join(', ')}`
+    }
+    /* Селектор нульовий з тієї ж причини, що й у ноти: унікального не завжди
+       видно. Декларація ж мусить бути завжди — джерело без `property`/`value`
+       не називає нічого. */
+    if (src.selector !== null && src.selector !== undefined) {
+      if (!isStr(src.selector)) return 'spacing.sources[].selector must be a string or null'
+      if (src.selector.length > MAX_MISC) {
+        return `spacing.sources[].selector must be ≤ ${MAX_MISC} characters`
+      }
+    }
+    for (const k of ['property', 'value']) {
+      if (!isStr(src[k]) || !src[k].trim()) return `spacing.sources[].${k} is required`
+      if (src[k].length > MAX_SPACING_DECL) {
+        return `spacing.sources[].${k} must be ≤ ${MAX_SPACING_DECL} characters`
+      }
+    }
+  }
+
+  return null
+}
+
 /* Returns an error string, or null when the body is a well-formed note. The
    caller keeps the shaping separate from the checking so that a rejected note
    never leaves a half-built record behind. */
@@ -297,6 +370,8 @@ function validateIncoming(b) {
   if (rectErr) return rectErr
   const vpErr = badViewport(b.viewport)
   if (vpErr) return vpErr
+  const spErr = badSpacing(b.spacing)
+  if (spErr) return spErr
 
   if (b.components !== undefined && b.components !== null) {
     if (!Array.isArray(b.components)) return 'components must be an array'
@@ -357,6 +432,31 @@ function shape(b) {
     rect: b.rect ?? null,
 
     components: Array.isArray(b.components) ? b.components : [],
+
+    /* Єдине поле, якого в записі може НЕ БУТИ. Решта нормалізується до `null`
+       чи `''`, бо читач має право звертатись до них не питаючи; `spacing` ж
+       відповідає на питання «чи ця нота взагалі про проміжок», і `null` тут
+       був би відповіддю «про проміжок, але невідомо який». Тому звичайна нота
+       ключа не має зовсім — так її й розрізняють міст і бриф.
+
+       Всередині — той самий білий список, що й зовні: `sources` перебираються
+       поелементно, щоб зайвий ключ у джерелі не приїхав у стор разом із
+       чесними трьома. */
+    ...(b.spacing
+      ? {
+          spacing: {
+            px: b.spacing.px,
+            axis: b.spacing.axis,
+            between: b.spacing.between.map((side) => (isStr(side) ? side : null)),
+            sources: b.spacing.sources.map((src) => ({
+              kind: src.kind,
+              selector: isStr(src.selector) ? src.selector : null,
+              property: src.property,
+              value: src.value,
+            })),
+          },
+        }
+      : {}),
 
     /* Always null on create, whatever the body claims: the shot arrives in its
        own `POST /notes/:id/shot` after the note exists, and a client that could
@@ -825,6 +925,10 @@ const server = createServer(async (req, res) => {
         return
       }
 
+      /* Рівно два поля, і `spacing` до них не належить свідомо: це властивість
+         МИТІ кліку — що саме створювало ту порожнечу, коли людина її побачила.
+         Дозволити його правити означало б дати переписати вимірювання заднім
+         числом; помилилися в замірі — це нова нота, а не редагування старої. */
       const hasStatus = body.status !== undefined
       const hasReply = body.reply !== undefined
       if (!hasStatus && !hasReply) {
