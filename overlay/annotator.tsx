@@ -758,21 +758,11 @@ function popoverStyle(anchor: Anchor, width: number): CSSProperties {
   return { left, bottom: Math.max(margin, window.innerHeight - anchor.y + gap), width }
 }
 
+/* Пошук елемента за нотою. Сам алгоритм («селектор, а як ні — шлях») лежить у
+   `findByPath` нижче: після появи відновлюваної чернетки в нього два
+   викликачі, і два однакові пошуки розійшлись би першою ж правкою. */
 function resolveElement(note: Note): Element | null {
-  if (note.selector) {
-    try {
-      const el = document.querySelector(note.selector)
-      if (el) return el
-    } catch {
-      /* a selector that no longer parses is the same as one that no longer
-         matches: fall through to the positional path */
-    }
-  }
-  try {
-    return document.querySelector(note.fullPath)
-  } catch {
-    return null
-  }
+  return findByPath(note.selector, note.fullPath)
 }
 
 const awaitsHuman = (n: Note) => n.thread.length > 0 && n.thread[n.thread.length - 1].role === 'agent'
@@ -1389,6 +1379,17 @@ const CSS_TEXT = `
   overflow-wrap: anywhere;
 }
 .smn-target--none { color: var(--muted); }
+/* Рядок про підняту чернетку. Стоїть найпершим у панелі й читається як
+   службова записка, а не як помилка: нічого не зламалось, просто сторінка
+   перезавантажилась під руками. */
+.smn-restored {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--muted);
+  font: 400 11px/1.45 var(--font-ui);
+}
 /* Хвіст шляху. Курсор — єдиний натяк, що під наведенням є повний шлях; іконки
    чи кнопки цей рядок не заслуговує, він і так запасний якір, а не зміст. */
 .smn-path { cursor: help; }
@@ -1675,6 +1676,163 @@ function initialTheme(): Theme {
   return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
 
+/* ── Чернетка переживає перезавантаження ──────────────────────────────────
+   Ця тулза стоїть у проєкті, який ПРЯМО ЗАРАЗ правлять агенти: дев-сервер
+   бачить зміну файла й перезавантажує сторінку. Незакінчена нота при цьому
+   зникала цілком — і текст, і приціл, — а це найдорожча втрата, яку тулза
+   може влаштувати: роботу (знайти дефект і сформулювати) людина вже зробила.
+
+   Тому чернетка з першої ж набраної літери лягає у сховище, а після
+   завантаження сторінки піднімається назад.
+
+   Чому `sessionStorage`, а не `localStorage`: чернетка — це робота ОДНІЄЇ
+   вкладки, і живе вона рівно стільки, скільки вкладка. `localStorage`
+   пережив би закриття браузера й спливав би в сусідній вкладці з тим самим
+   роутом — тобто нота, кинута вчора, здоровкалась би сьогодні в іншому вікні.
+   Перезавантаження ж (і HMR-ний full reload, і F5) `sessionStorage` тримає,
+   а це рівно той випадок, заради якого все й робиться.
+
+   Чого у сховищі НЕМАЄ — кадру. Це PNG на сотні кілобайтів; у base64 він
+   з'їв би всю квоту вкладки з першої ноти. Кадр після відновлення знімається
+   ЗАНОВО по збереженому селектору, а якщо елемента на сторінці вже немає —
+   композер каже про це рядком, а не мовчить (мовчазна нота без кадру гірша
+   за явне «frame lost»). */
+const DRAFT_KEY = 'smn-draft'
+/* Строк придатності. Чернетка, якій година, — це вже не робота, а сміття:
+   людина давно пішла з цього екрана, а текст, який спливе через півдня,
+   виглядатиме як чужий. */
+const DRAFT_TTL_MS = 60 * 60 * 1000
+
+/* Проміжок у координатах КОНТЕЙНЕРА — те саме, що тримає жива чернетка. Після
+   перезавантаження елемент знаходиться заново, і це єдиний спосіб знайти в
+   ньому ту саму порожнечу. */
+type GapRel = { x: number; y: number; w: number; h: number; cx: number; cy: number }
+
+type StoredDraft = {
+  /* Схема чернетки — не контракт нот, вона живе лише в цьому файлі. Номер
+     потрібен, щоб чернетка від старішої версії оверлея не піднялась у новішу
+     й не розсипалась на полі, якого вже немає: чужа версія просто ігнорується. */
+  v: 1
+  at: number
+  /* Рівно `pathname`, без `search`: саме за ним оверлей і скидає чернетку на
+     навігації, тож прив'язка мусить бути та сама. */
+  path: string
+  text: string
+  capture: Capture
+  gapRel: GapRel | null
+}
+
+function clearStoredDraft() {
+  try {
+    sessionStorage.removeItem(DRAFT_KEY)
+  } catch {
+    /* приватний режим / заблоковане сховище — чернетка просто не переживе */
+  }
+}
+
+function writeStoredDraft(d: StoredDraft) {
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d))
+  } catch {
+    /* квота або заблоковане сховище: втрачається лише страховка, сама
+       чернетка на екрані живе далі */
+  }
+}
+
+/* Читання з ТРЬОМА відмовами, і всі три тихі: чужа версія схеми, прострочення
+   і чужий роут. Остання — головна: відновити чернетку не на тому екрані гірше,
+   ніж не відновити зовсім, бо селектор поїде з одного екрана, а `url` ноти —
+   з іншого, і виконавець піде не туди. */
+function readStoredDraft(path: string): StoredDraft | null {
+  let raw: string | null
+  try {
+    raw = sessionStorage.getItem(DRAFT_KEY)
+  } catch {
+    return null
+  }
+  if (!raw) return null
+  try {
+    const d = JSON.parse(raw) as Partial<StoredDraft>
+    if (d?.v !== 1 || typeof d.text !== 'string' || !d.text.trim()) return null
+    if (typeof d.at !== 'number' || Date.now() - d.at > DRAFT_TTL_MS) return null
+    if (d.path !== path) return null
+    const c = d.capture
+    if (!c || typeof c.fullPath !== 'string' || typeof c.tagName !== 'string' || !c.rect) return null
+    return {
+      v: 1,
+      at: d.at,
+      path: d.path,
+      text: d.text,
+      capture: { ...c, components: Array.isArray(c.components) ? c.components : [] },
+      gapRel: d.gapRel ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+/* Той самий пошук, що й `resolveElement` для ноти, але для чернетки: у неї
+   немає `id` і немає треду, є рівно селектор і шлях. Один алгоритм на двох
+   викликачів — інакше нота після перезавантаження знаходила б елемент, а
+   чернетка про той самий елемент — ні. */
+function findByPath(selector: string | null, fullPath: string): Element | null {
+  if (selector) {
+    try {
+      const el = document.querySelector(selector)
+      if (el) return el
+    } catch {
+      /* селектор, який більше не парситься, — те саме, що й той, який більше
+         не знаходить: падаємо у запасний шлях */
+    }
+  }
+  try {
+    return document.querySelector(fullPath)
+  } catch {
+    return null
+  }
+}
+
+/* ── Vite: відкласти перезавантаження, поки відкрита чернетка ──────────────
+   Пункт «зберегти» вище закриває проблему сам по собі — це ж лише прибирає
+   моргання: якщо чернетку можна не втрачати взагалі, краще її не втрачати.
+
+   Механіка — підміна поля в payload слухача `vite:beforeFullReload`. Клієнт
+   Vite (8.x, `client.mjs`, гілка `case "full-reload"`) чекає слухачів, а потім
+   дивиться на `payload.path`: якщо шлях закінчується на `.html` і НЕ збігається
+   з поточною сторінкою — він виходить, не перезавантажуючи. Слухач отримує той
+   самий обʼєкт, тож підміна шляху на неіснуючу сторінку і є «скасувати зараз».
+
+   Відомий хак «кинути виняток зі слухача» тут не працює: слухачів кличуть через
+   `Promise.allSettled`, який падіння ковтає, і `location.reload()` іде далі.
+
+   Це хак, а не API, тому й обставлений так:
+
+   - `import.meta.hot` є лише у Vite і лише в дев-збірці. У проєкті без Vite
+     (тулза ставиться в різні) `hot` буде `undefined`, і код просто не
+     вмикається — нічого не ламається й нічого не треба вимикати руками.
+   - відкладене перезавантаження не губиться: щойно чернетку відправлено або
+     скасовано, воно виконується. Інакше користувач лишився б на застарілому
+     коді, і наступна нота приїхала б про елемент, якого в джерелі вже немає.
+   - якщо хак колись перестане працювати (інша версія Vite — інша гілка), то
+     зламається рівно моргання: сторінка перезавантажиться, як і раніше, а
+     чернетка підніметься зі сховища. Тримати заради цього щось складніше —
+     не варте того. */
+type ReloadPayload = { path?: string }
+type ViteHot = {
+  on: (event: string, cb: (payload: ReloadPayload) => void) => void
+  off?: (event: string, cb: (payload: ReloadPayload) => void) => void
+}
+/* Неіснуюча сторінка, якою підміняється `payload.path`. Мусить: закінчуватись
+   на `.html` (інакше клієнт іде в безумовний reload), не бути `/index.html`
+   (окремий випадок, який теж перезавантажує) і не збігатися з жодним реальним
+   роутом. Ім'я говорить саме за себе — якщо цей рядок колись спливе в логах,
+   зрозуміло, хто його поклав. */
+const DEFERRED_RELOAD_PATH = '/__smn-deferred-reload.html'
+function viteHot(): ViteHot | null {
+  const hot = (import.meta as unknown as { hot?: ViteHot }).hot
+  return hot && typeof hot.on === 'function' ? hot : null
+}
+
 /* ── Вкладка рев'ю-шухляди ─────────────────────────────────────────────────
    Шухляда рев'ю-сторінки показує анотований екран в iframe і ставить у нього
    свою мітку — порядковий номер правки в УСЬОМУ лозі. Живий оверлей у тому ж
@@ -1764,12 +1922,34 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
      поруч як остача: якщо після ресайзу проміжку в цьому місці вже немає
      (розмітка перебудувалась), смуга просто їде за контейнером, а не зникає
      й не стрибає в кут екрана. */
+  /* `el` став нульовим саме через відновлення: у чернетки, піднятої зі
+     сховища, живого вузла ще немає — його шукають уже після монтування, коли
+     DOM сторінки існує. Ні відправка, ні композер від вузла не залежать (їм
+     вистачає `capture`), від нього залежить лише підсвітка й переміряння. */
   const [draft, setDraft] = useState<{
     capture: Capture
-    el: Element
+    el: Element | null
     anchor: Anchor
-    gapRel: { x: number; y: number; w: number; h: number; cx: number; cy: number } | null
-  } | null>(null)
+    gapRel: GapRel | null
+    /* Позначка «це не свіжий приціл, а піднята чернетка». Потрібна рівно для
+       одного: сказати про це користувачу в композері — разом із долею кадру. */
+    restored?: boolean
+  } | null>(() => {
+    const saved = readStoredDraft(pathname)
+    if (!saved) return null
+    return {
+      capture: saved.capture,
+      /* Ініціалізатор стану виконується ДО коміту — сторінки в DOM ще може не
+         бути, тож шукати тут нічого. Прямокутник із памʼяті тримає підсвітку
+         першим кадром, а ефект нижче знайде вузол і переміряє. */
+      el: null,
+      anchor: saved.capture.rect,
+      gapRel: saved.gapRel,
+      restored: true,
+    }
+  })
+  /* Текст піднімається окремо від чернетки, бо живе він у композері. */
+  const [restoredText] = useState(() => readStoredDraft(pathname)?.text ?? '')
   /* Кадр живе поруч із чернеткою, а не всередині неї: зйомка асинхронна й
      завершується вже після того, як поповер відкрито. */
   const [shot, setShot] = useState<Shot | null>(null)
@@ -1797,6 +1977,10 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
   const [seenPath, setSeenPath] = useState(pathname)
   if (pathname !== seenPath) {
     setSeenPath(pathname)
+    /* Чернетку, кинуту навігацією, зі сховища теж прибираємо: інакше вона
+       піднялась би після повернення на той самий екран — тобто «воскресла»
+       рівно там, де її свідомо викинули. */
+    clearStoredDraft()
     setDraft(null)
     setShot(null)
     setOpenId(null)
@@ -1821,6 +2005,33 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     return () => URL.revokeObjectURL(url)
   }, [shot])
 
+  /* ── Відкладене перезавантаження ────────────────────────────────────────
+     Слухач мусить знати, чи є зараз відкрита чернетка, але перевішувати його
+     на кожну зміну стану не можна: між зняттям і навішуванням якраз і прилетів
+     би full reload. Тому слухач ставиться раз, а стан читає з рефа. */
+  const draftOpen = useRef(false)
+  useEffect(() => {
+    draftOpen.current = draft !== null
+  }, [draft])
+  const reloadPending = useRef(false)
+  const flushReload = useCallback(() => {
+    if (!reloadPending.current) return
+    reloadPending.current = false
+    location.reload()
+  }, [])
+  useEffect(() => {
+    const hot = viteHot()
+    if (!hot) return
+    const defer = (payload: ReloadPayload) => {
+      if (!draftOpen.current) return
+      reloadPending.current = true
+      /* Мутація чужого payload — і є вся механіка скасування, див. `viteHot`. */
+      payload.path = DEFERRED_RELOAD_PATH
+    }
+    hot.on('vite:beforeFullReload', defer)
+    return () => hot.off?.('vite:beforeFullReload', defer)
+  }, [])
+
   /* Закриття чернетки — завжди разом із кадром: лишений кадр показався б у
      наступній ноті як її власний. */
   const closeDraft = useCallback(() => {
@@ -1830,7 +2041,17 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
     shotJob.current = Promise.resolve(null)
     setDraft(null)
     setShot(null)
-  }, [])
+    /* Чернетки більше немає — отже, немає чого й берегти. Сюди приходять усі
+       способи її закрити: відправка, Cancel, Esc, перемикання прицілу, клік по
+       піну. Не чистити тут означало б підняти після наступного F5 ноту, яку
+       щойно відправили. */
+    clearStoredDraft()
+    /* І тут-таки віддається борг по перезавантаженню, якщо воно відкладалось:
+       чернетки немає, тримати сторінку на застарілому коді більше нема заради
+       чого. Момент правильний саме цей — `onSend` викликає `closeDraft` уже
+       після того, як POST ноти завершився. */
+    flushReload()
+  }, [flushReload])
 
   const [host] = useState(() => {
     const el = document.createElement('div')
@@ -2000,6 +2221,76 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
       window.removeEventListener('resize', schedule)
     }
   }, [draftEl, draftRel])
+
+  /* ── Підняття чернетки: вузол і кадр ────────────────────────────────────
+     Зі сховища приїхали текст і `capture` — цього досить, щоб ноту відправити
+     без повторного прицілювання. Не приїхало дві речі, і обидві добуваються
+     тут-таки, на місці:
+
+       вузол — щоб підсвітка знову стояла на предметі, а не на прямокутнику
+               з пам'яті, який після відновленого скролу вказує в порожнечу;
+       кадр  — його у сховищі не було ніколи (див. `DRAFT_KEY`), тож він
+               знімається заново, тим самим шляхом, що й при кліку.
+
+     Пошук — не одразу, а з кількох спроб: після перезавантаження елемент
+     з'являється не в першому кадрі, якщо роут прийшов окремим чанком. Не
+     знайшли й за три — так і кажемо в композері, бо нота без кадру, яка про це
+     мовчить, доїде до виконавця як «кадру не буде, і ніхто не знає чому». */
+  const restoring = useRef(draft?.restored ? draft : null)
+  useEffect(() => {
+    const saved = restoring.current
+    if (!saved) return
+    restoring.current = null
+    let raf = 0
+    let timer = 0
+    const attempt = (left: number) => {
+      const el = findByPath(saved.capture.selector, saved.capture.fullPath)
+      if (!el) {
+        if (left > 0) {
+          timer = window.setTimeout(() => attempt(left - 1), 250)
+          return
+        }
+        setShot({ status: 'failed', reason: 'frame lost on reload, the element is no longer on the page' })
+        return
+      }
+      const r = el.getBoundingClientRect()
+      const rel = saved.gapRel
+      /* Порожнечу шукаємо тією самою функцією й тією самою точкою в координатах
+         контейнера, що й ефект переміряння вище — другого алгоритму тут немає. */
+      const gap = rel ? measureGap(el, r.left + rel.cx, r.top + rel.cy, deepSelector) : null
+      const anchor: Anchor = rel
+        ? gap
+          ? { x: gap.rect.x, y: gap.rect.y, w: gap.rect.w, h: gap.rect.h }
+          : { x: r.left + rel.x, y: r.top + rel.y, w: rel.w, h: rel.h }
+        : { x: r.left, y: r.top, w: r.width, h: r.height }
+      setDraft((cur) => (cur && !cur.el ? { ...cur, el, anchor } : cur))
+
+      const subject = gap ? gap.context : el
+      const mark: Rect = gap ? gap.rect : rectOf(el)
+      const frame = shotFrame(subject)
+      setShot({ status: 'taking', ratio: frame.w > 0 && frame.h > 0 ? frame.w / frame.h : undefined })
+      const run = shotRun.current + 1
+      shotRun.current = run
+      shotJob.current = takeShot(subject, host, mark).then(
+        (ready) => {
+          if (shotRun.current === run) setShot({ status: 'ready', ...ready })
+          else URL.revokeObjectURL(ready.url)
+          return ready.blob
+        },
+        (e: unknown) => {
+          if (shotRun.current === run) {
+            setShot({ status: 'failed', reason: e instanceof Error ? e.message : 'capture failed' })
+          }
+          return null
+        },
+      )
+    }
+    raf = requestAnimationFrame(() => attempt(2))
+    return () => {
+      cancelAnimationFrame(raf)
+      if (timer) clearTimeout(timer)
+    }
+  }, [host])
 
   /* ── Aim mode ──────────────────────────────────────────────────────────
      Listeners live on the document in the CAPTURE phase, not on a full-screen
@@ -2368,6 +2659,26 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
           <Composer
             capture={draft.capture}
             shot={shot}
+            initialText={draft.restored ? restoredText : ''}
+            restored={!!draft.restored}
+            /* Чернетка лягає у сховище з першої ж літери й переписується на
+               кожній наступній: писати рідше означало б обрати, скільки
+               символів не шкода втратити. Порожній текст стирає запис — нота,
+               яку ще не почали, не варта воскресіння. */
+            onText={(text) => {
+              if (!text.trim()) {
+                clearStoredDraft()
+                return
+              }
+              writeStoredDraft({
+                v: 1,
+                at: Date.now(),
+                path: pathname,
+                text,
+                capture: draft.capture,
+                gapRel: draft.gapRel,
+              })
+            }}
             onCancel={closeDraft}
             onSend={async (text) => {
               await submit(text, draft.capture, shotJob.current)
@@ -2416,6 +2727,7 @@ function Overlay({ pathname, search }: { pathname: string; search: string }) {
                       className={`smn-row${n.status === 'resolved' ? ' smn-row--done' : ''}${wait ? ' smn-row--wait' : ''}`}
                       onClick={() => {
                         setDraft(null)
+                        clearStoredDraft()
                         setOpenId(n.id)
                         const el = resolveElement(n)
                         el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -2541,15 +2853,23 @@ async function errorOf(res: Response): Promise<string> {
 function Composer({
   capture: c,
   shot,
+  initialText,
+  restored,
+  onText,
   onCancel,
   onSend,
 }: {
   capture: Capture
   shot: Shot | null
+  /* Текст піднятої чернетки. Для свіжого прицілу — порожній рядок; поле
+     стартує з нього, а далі живе як жило. */
+  initialText: string
+  restored: boolean
+  onText: (text: string) => void
   onCancel: () => void
   onSend: (text: string) => Promise<void>
 }) {
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialText)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -2586,6 +2906,18 @@ function Composer({
             на місці: кадр буває високим, а «куди писати» не має ховатись за
             краєм коробки на низькому екрані. */}
         <div className="smn-scroll">
+          {/* Про підняту чернетку кажемо прямо, і кажемо ЩО саме з нею сталось.
+              Текст пережив перезавантаження, а кадр — ні: він знімається
+              наново, і це різні речі за надійністю. Мовчазно відправлена нота
+              з кадром «звідкись» або без кадру взагалі — гірша за зайвий рядок
+              на панелі. */}
+          {restored && (
+            <div className="smn-restored">
+              {shot?.status === 'failed'
+                ? 'Draft restored after a page reload. The frame is lost — the element was not found again.'
+                : 'Draft restored after a page reload. The frame was taken again just now — check it shows the right thing.'}
+            </div>
+          )}
           <div className={`smn-target${c.selector ? '' : ' smn-target--none'}`}>
             {c.spacing && <SpacingTarget spacing={c.spacing} />}
             {c.selector || `${c.tagName} — no unique selector, path only`}
@@ -2606,7 +2938,12 @@ function Composer({
               Capturing the frame…
             </div>
           )}
-          {shot?.status === 'failed' && <div className="smn-shot smn-shot--none">No frame — the note goes without it</div>}
+          {/* Причина тепер видима: «кадру немає» і «кадру немає, бо елемента
+              вже немає на сторінці» — це різні новини, і друга ще й натякає,
+              що варто перевірити сам приціл. */}
+          {shot?.status === 'failed' && (
+            <div className="smn-shot smn-shot--none">No frame ({shot.reason}) — the note goes without it</div>
+          )}
         </div>
         <textarea
           ref={ref}
@@ -2615,7 +2952,10 @@ function Composer({
           maxLength={MAX_NOTE}
           placeholder="What is wrong and how it should be"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            onText(e.target.value)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void send()
           }}
