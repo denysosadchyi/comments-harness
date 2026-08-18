@@ -78,8 +78,10 @@ systemd user units from templates under your project's name
 (`<project>-notes`, `<project>-ratings`, `<project>-watchdog`), registers the
 MCP bridge with Claude Code, and symlinks the review page into your static
 directory. It is idempotent: a second run leaves everything that already exists
-alone. At the end it prints exactly what is left for a human — the overlay
-mounting snippet and the review URL.
+alone. At the end it prints what is left for a human — the overlay mounting
+snippet — then the review page URL (with your dev server's port read out of
+your vite/next config or package.json scripts), a table of everything you can
+now do and its hotkeys, and what the conveyor does on its own.
 
 Flags: `--no-systemd` (units land in `generated-units/`, you start the
 processes yourself), `--no-mcp`, `--no-symlinks`, `--prefix=<name>`,
