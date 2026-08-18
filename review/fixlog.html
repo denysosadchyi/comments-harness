@@ -1088,89 +1088,12 @@
          is a white flash into a white page, not a dark hole into a white one. */
       .dr__frame { flex: 1 1 auto; width: 100%; border: 0; background: oklch(1 0 0); }
 
-      /* ── Кадр проти живої сторінки ────────────────────────────────────────
-         Дві правди про той самий екран, і жодна не витісняє іншу. Кадр —
-         єдине, що відповідає на питання «а що там було, коли це писали»:
-         через конвеєр іде по три сотні правок на день, і живий iframe на
-         вчорашньому рядку показує вже інший застосунок. Жива сторінка —
-         єдине, що відповідає на «а зараз як», а шухляду відкривають і заради
-         цього теж, бо тут-таки стоїть кнопка Send back.
-         Тому перемикач, а не заміна: дефолт — кадр (питання рядка історичне),
-         але другий режим на відстані одного кліка й ніде не схований. */
-      .dr__view {
-        display: flex;
-        flex: 0 0 auto;
-        border: 1px solid var(--line);
-        border-radius: var(--r-sm);
-        overflow: hidden;
-      }
-      .dr__view button {
-        padding: 5px 10px;
-        border: 0;
-        background: none;
-        color: var(--muted);
-        font: 500 11px/1 var(--font-ui);
-        cursor: pointer;
-        transition: color var(--dur-fast) var(--ease-out),
-                    background-color var(--dur-fast) var(--ease-out);
-      }
-      .dr__view button + button { border-left: 1px solid var(--line); }
-      .dr__view button:hover:not([disabled]) { color: var(--ink); background: var(--bg-hover); }
-      .dr__view button:focus-visible { outline: none; box-shadow: var(--ring); }
-      .dr__view button[aria-pressed='true'] { color: var(--ink); background: var(--bg-hover); }
-      .dr__view button[disabled] { opacity: .35; cursor: default; }
-
       .dr__stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-      /* Смужка «що ти зараз бачиш». Вона тут не декоративна: непорозуміння,
-         заради якого все це робиться, звучало як «в шухляді не те, що я
-         анотував», і виникло рівно з того, що кадр і жива сторінка виглядали
-         однаково. Тож режим підписаний завжди, обидва. Живий стан носить
-         колір-попередження, кадр — приглушений: сумніватись треба саме в
-         живому, він єдиний міняється під ногами. */
-      .dr__mode {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin: 0;
-        padding: 6px 14px;
-        border-bottom: 1px solid var(--line);
-        color: var(--muted);
-        font: 500 11px/1.4 var(--font-ui);
-      }
-      .dr__mode b { color: var(--ink-2); font-weight: 600; }
-      .dr__mode--live { background: var(--danger-soft); color: var(--ink-2); }
-      .dr__mode--live b { color: var(--danger); }
 
-      /* Кадр гортається, а не вписується: він знятий у ретині й ширший за
-         панель, а вписаний у висоту він став би нечитабельним прямокутником,
-         на якому обведеного елемента вже не розібрати. Ширина обмежена
-         панеллю, висота — власна. */
-      .dr__shot {
-        flex: 1 1 auto;
-        min-height: 0;
-        overflow: auto;
-        padding: 16px;
-        background: var(--bg-inset);
-        text-align: center;
-      }
-      .dr__shot img { max-width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); }
-
-      /* Кадру немає — так і сказано. Порожнє місце читалось би як «сторінка
-         зламалась», а це нормальний випадок: 22 теки з кадром на 308 правок,
-         бо знімати оверлей навчився пізніше за сам конвеєр. */
-      .dr__none {
-        flex: 1 1 auto;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 24px;
-        color: var(--muted);
-        font: 400 12.5px/1.6 var(--font-ui);
-        text-align: center;
-      }
-      .dr__stage > [hidden] { display: none; }
-
-      /* Той самий кадр у діалозі Details, під контекстом елемента: там
+      /* Кадр живе рівно в одному місці — у діалозі Details, під контекстом
+         елемента. У шухляді його немає свідомо: шухляду відкривають, щоб
+         подивитись на ЖИВУ сторінку з міткою правки, а читають, що саме було
+         анотовано, — у треді. Тут, під контекстом елемента: там
          перелічено тег, селектор і компоненти — тобто елемент описано
          словами, — а кадр показує його ж обведеним, і це найдешевший спосіб
          впізнати, про що взагалі мова. */
@@ -1492,22 +1415,13 @@
             <button type="button" class="icon-btn redo" id="drRedo"
               title="Send back" aria-label="Send back"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z"/></g></svg></button>
           </div>
-          <div class="dr__view" id="drView" role="group" aria-label="What to show">
-            <button type="button" id="drViewShot" aria-pressed="true"
-              title="The screenshot taken when the note was written">Snapshot</button>
-            <button type="button" id="drViewLive" aria-pressed="false"
-              title="The app as it is right now">Live</button>
-          </div>
           <div class="dr__actions">
             <a class="dr__open" id="drOpen" target="_blank" rel="noopener">Open ↗</a>
             <button class="dr__x" id="drClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M14.5 9.50002L9.5 14.5M9.49998 9.5L14.5 14.5"/></g></svg></button>
           </div>
         </header>
         <div class="dr__stage">
-          <p class="dr__mode" id="drMode"></p>
-          <div class="dr__shot" id="drShotWrap" hidden><img id="drShot" alt="Screenshot taken when the note was written"></div>
-          <p class="dr__none" id="drNone" hidden></p>
-          <iframe class="dr__frame" id="drFrame" title="Fix screen" hidden></iframe>
+          <iframe class="dr__frame" id="drFrame" title="Fix screen"></iframe>
         </div>
       </aside>
     </div>
@@ -2563,19 +2477,14 @@
         document.querySelectorAll('tr.is-current').forEach((el) => el.classList.remove('is-current'))
         document.querySelectorAll(`tr[data-i="${i}"]`).forEach((el) => el.classList.add('is-current'))
         const r = visible[i]
-        openDrawer(
-          route,
-          r.x != null && r.y != null ? { x: r.x, y: r.y, num: r.num } : null,
-          r.status === 'done' ? r.key : '',
-          r,
-        )
+        openDrawer(route, r.status === 'done' ? r.key : '', r)
       }
       /* ── Мітка «це кадр рев'ю» ────────────────────────────────────────────
-         У шухляді на екрані вже є одна мітка — номер правки з лога. Оверлей
-         застосунку, живий усередині того ж кадру, малював поруч другу, свою,
-         з нумерацією в межах екрана: «302» і «1» на одному місці, різні
-         сутності, однаковий вигляд. Шухляда показує минуле, тож піни відкритих
-         нот у ній прибрано — оверлей, побачивши цей параметр, не монтується.
+         Мітки в шухляді малює вона сама, з номерами лога. Оверлей застосунку,
+         живий усередині того ж кадру, малював поруч другі, свої, з нумерацією
+         в межах екрана: «302» і «1» на одному місці, різні сутності, однаковий
+         вигляд. Тож у кадрі рев'ю оверлей не монтується — побачивши цей
+         параметр, він мовчить, і мітка на екрані лишається одна на правку.
 
          Параметр, а не `window.parent !== window` на тому боці: навігатор
          прототипу теж тримає застосунок в iframe, і там оверлей потрібен.
@@ -2596,83 +2505,36 @@
          поля з ним ніде немає: рядок приїхав із `fixlog.md`, де є тільки id.
          Тому для закритого рядка URL будується наосліп, а існування файлу
          з'ясовує сам браузер через `onerror` — 22 теки з кадром на 308 правок,
-         і питати сервер наперед про кожну означало б запит на кожен рядок. */
+         і питати сервер наперед про кожну означало б запит на кожен рядок.
+
+         Єдиний споживач — діалог Details: у шухляді кадру немає, там жива
+         сторінка з міткою. */
       const shotUrl = (row) => {
-        if (!row || !row.key || row.noShot) return ''
+        if (!row || !row.key) return ''
         if (row.live) return row.shot ? `${ANN}/${row.shot}` : ''
         return `${ANN}/fixes/${encodeURIComponent(row.key)}/shot.png`
       }
 
-      /* Стан шухляди тримається тут, а не перечитується з DOM: перемикач
-         режиму мусить знати роут, пін і рядок, з якими шухляду відкрили, а
+      /* Стан шухляди тримається тут, а не перечитується з DOM: перезарядка
+         кадру мусить знати роут, пін і рядок, з якими шухляду відкрили, а
          відновлювати їх із заголовка було б другим носієм тих самих даних. */
       let drRoute = ''
-      let drPin = null
       let drRow = null
-      let drMode = 'shot'
+      /* Мітки цього екрана: усі правки того ж роуту, що мають координати.
+         Головна — та, чий рядок відкрили. */
+      let drPins = []
 
-      /* Один вимикач на обидва режими. Кадр і жива сторінка ніколи не видні
-         одночасно — це не два погляди на одне, а два різні моменти часу, і
-         показані поруч вони б знову злилися в «щось про цей екран». */
-      function showMode(mode) {
-        const url = shotUrl(drRow)
-        /* Кадру нема чому взятися — кнопку глушимо, а не даємо натиснути й
-           отримати порожнечу. */
-        $('drViewShot').disabled = !url
-        if (mode === 'shot' && !url) mode = 'none'
-        drMode = mode
+      /* Скільки правок на екрані, стільки й міток. Номер на мітці — той
+         самий `r.num`, що в колонці «#» таблиці: від мітки видно рядок, від
+         рядка — мітку. Спільного номера чи номера відкритого рядка на всіх
+         тут бути не може — це різні правки. Без координат (старі записи)
+         мітки просто немає, без заглушок. */
+      const pinsFor = (route, row) =>
+        state.rows
+          .filter((r) => r.x != null && r.y != null && navRoute(r.routePath) === route)
+          .map((r) => ({ x: r.x, y: r.y, num: r.num, main: !!row && r.key === row.key }))
 
-        const live = mode === 'live'
-        $('drViewShot').setAttribute('aria-pressed', String(mode === 'shot'))
-        $('drViewLive').setAttribute('aria-pressed', String(live))
-
-        const frame = $('drFrame')
-        const wrap = $('drShotWrap')
-        const none = $('drNone')
-        wrap.hidden = mode !== 'shot'
-        none.hidden = mode !== 'none'
-        frame.hidden = !live
-
-        if (mode === 'shot') {
-          const img = $('drShot')
-          if (img.src !== url) img.src = url
-        }
-        if (mode === 'none') {
-          none.textContent = drRow && drRow.live
-            ? 'No snapshot for this note — the capture did not succeed. Switch to Live to see the screen as it is now.'
-            : 'No snapshot for this fix — it was closed before the overlay started saving screenshots, or the capture failed. Switch to Live to see the screen as it is now.'
-        }
-
-        if (live) {
-          /* Кадр iframe заряджається ЛИШЕ коли його справді просять: інакше
-             застосунок крутився б за кадром на кожному відкритті шухляди —
-             зі своїми таймерами й запитами — заради вкладки, яку ніхто не
-             відкрив. */
-          const src = frameSrc(drRoute)
-          if (!frame.src || frame.src === 'about:blank' || frame.dataset.route !== drRoute) {
-            frame.dataset.route = drRoute
-            frame.onload = () => drPin && dropPin(frame, drPin)
-            frame.src = src
-          }
-        } else if (frame.src && frame.src !== 'about:blank') {
-          /* Пішли з живого режиму — глушимо застосунок там же, де й на
-             закритті шухляди. */
-          frame.src = 'about:blank'
-          frame.dataset.route = ''
-        }
-
-        const strip = $('drMode')
-        strip.classList.toggle('dr__mode--live', live)
-        strip.innerHTML = live
-          ? `<b>Live app</b> — today's state of ${esc(drRoute)}, not the screen this note was written about.`
-          : mode === 'shot'
-            ? `<b>Snapshot</b> — ${esc(drRoute)} as it looked when the note was written${
-                drRow && drRow.time ? ' · ' + esc(drRow.time) : ''
-              }.`
-            : `<b>No snapshot</b> — nothing was saved for this fix.`
-      }
-
-      function openDrawer(route, pin, key, row) {
+      function openDrawer(route, key, row) {
         if (!route || route === '—') return
         /* The name is the request itself — what was asked for is what
            identifies a fix to a human; the route is supporting detail. */
@@ -2698,102 +2560,182 @@
            там анотують. Марковану адресу отримує ЛИШЕ кадр шухляди. */
         $('drOpen').href = route
         drRoute = route
-        drPin = pin
         drRow = row
-        /* Дефолт — кадр, і це не смак. Рядок, який відкривають у шухляді, —
-           запис про минуле; питання до нього «як воно виглядало, коли про це
-           писали», і відповідає на нього тільки кадр. Живий екран лишається
-           одним кліком поруч, бо друге питання — «а полагодили?» — теж
-           справжнє, просто воно друге. Кадру немає → чесний напис про це, а
-           не мовчазний підмін на сьогоднішній екран: саме така підміна і була
-           дефектом. */
-        showMode(shotUrl(row) ? 'shot' : row ? 'none' : 'live')
+        drPins = pinsFor(route, row)
+        /* Шухляда показує ЖИВУ сторінку з мітками правок — заради них її й
+           відкривають. Кадр сюди не приходить узагалі: він живе в діалозі
+           Details, поруч із тредом, де читають, що саме було анотовано. */
+        const frame = $('drFrame')
+        stopPins()
+        /* `onload` вішаємо назавжди, а не один раз на `src`: дев-сервер
+           перезавантажує сторінку від кожної правки виконавця, і після
+           кожного такого релоуду мітки треба поставити знову. */
+        frame.onload = paintPins
+        if (frame.dataset.route !== route || !frame.src || frame.src === 'about:blank') {
+          frame.dataset.route = route
+          frame.src = frameSrc(route)
+        } else {
+          /* Той самий роут уже в кадрі (сусідня нота на тому ж екрані) —
+             `load` більше не спрацює, тож старі мітки прибираємо руками, щоб
+             `paintPins` намалював новий набір із новою головною. */
+          const d = frame.contentDocument
+          const old = d && d.getElementById('fixlog-pins')
+          if (old) old.remove()
+        }
+        /* Сторожі стартують ДО того, як кадр доїхав: перший же тик, на якому
+           в документі зʼявиться `body`, і поставить мітки. Тобто «сторінка ще
+           вантажиться» не означає «мітки поки немає» — означає «мітка буде,
+           щойно буде куди». */
+        startPins()
         dr.hidden = false
         document.body.style.overflow = 'hidden'
       }
 
-      $('drViewShot').addEventListener('click', () => showMode('shot'))
-      $('drViewLive').addEventListener('click', () => showMode('live'))
-      /* Файл могло не бути (стара тека) або сервер нот лежить. Мовчки
-         перекидати на живий екран не можна — це рівно те непорозуміння, з
-         якого все почалось. */
-      $('drShot').addEventListener('error', () => {
-        if (drMode !== 'shot') return
-        /* Позначка живе на рядку, а не в локальній змінній: доки цей об'єкт
-           рядка живий, повторне відкриття тієї ж правки вже не б'є в сервер
-           по файл, якого там немає. */
-        if (drRow) drRow.noShot = true
-        $('drShot').removeAttribute('src')
-        showMode('none')
-      })
-
-      /* The drawer and the app are the same origin, so the pin goes INTO the
-         iframe's document rather than floating over it — that way it scrolls
-         with the content and stays on the element it marks.
-
-         Retried, not fired once: `load` fires when the HTML document is done,
-         but the app inside is a React SPA that mounts afterwards. At that
-         moment the body is still near-zero height, so a pin placed at y=900
-         lands past the end of the document and the scroll goes nowhere. The
-         retry re-places it as the page grows and stops once the body is tall
-         enough to actually hold it. */
       function closeDrawer() {
         dr.hidden = true
         document.querySelectorAll('tr.is-current').forEach((el) => el.classList.remove('is-current'))
         /* Blank the frame: otherwise the app keeps running behind the scrim,
            with its own timers, fetches and annotation toolbar alive. */
+        stopPins()
+        $('drFrame').onload = null
         $('drFrame').src = 'about:blank'
         $('drFrame').dataset.route = ''
-        /* І кадр теж: інакше наступне відкриття встигає блимнути попереднім
-           знімком, поки вантажиться свій — тобто рівно тим «не тим екраном»,
-           від якого цей режим і рятує. */
-        $('drShot').removeAttribute('src')
-        drRoute = ''; drPin = null; drRow = null
+        drRoute = ''; drRow = null; drPins = []
         document.body.style.overflow = ''
       }
 
-      function dropPin(frame, pin) {
-        const y = Number(pin.y) || 0
-        let tries = 0
+      /* ── Мітки правок у кадрі ─────────────────────────────────────────
+         Шухляду відкривають рівно заради цього: побачити сторінку і на ній
+         місце, про яке писали. Тож мітки — не прикраса кадру, а його зміст,
+         і код нижче написаний під одну вимогу: мітка є ЗАВЖДИ, доки шухляда
+         відкрита.
 
-        const place = () => {
-          let d
-          try { d = frame.contentDocument } catch { return } // navigated cross-origin
-          if (!d || !d.body) { if (++tries < 40) setTimeout(place, 100); return }
+         Мітки інʼєктуються в ЧУЖИЙ документ — React-SPA всередині iframe, —
+         де їх зносить трьома різними способами:
+           • SPA перемальовує дерево й викидає сторонній вузол;
+           • дев-сервер перезавантажує сторінку від кожної правки виконавця
+             (тут їх сотні на день) — документ узагалі новий;
+           • сам застосунок монтується вже після `load`, коли `body` ще
+             майже нульової висоти.
+         Тому мітки не «ставляться», а тримаються трьома незалежними
+         сторожами: `load` кадру, MutationObserver над `body` і секундний
+         добір-таймер. Кожен із них викликає ту саму ідемпотентну `paintPins`,
+         і достатньо одного, що вцілів. Усі троє гинуть у `stopPins()`.
 
-          let el = d.getElementById('fixlog-pin')
-          if (!el) {
-            el = d.createElement('div')
-            el.id = 'fixlog-pin'
-            el.textContent = pin.num || '1'
-            /* Literal colours on purpose: this node is injected into ANOTHER
-               document (the app's), which has never seen this page's tokens
-               and must not be made to depend on them. */
-            el.style.cssText = [
-              'position:absolute', 'transform:translate(-50%,-50%)',
-              'z-index:2147483647', 'width:28px', 'height:28px',
-              'border-radius:50%', 'display:flex', 'align-items:center',
-              'justify-content:center', 'background:#f5a524', 'color:#1a2333',
-              'font:700 13px/1 system-ui,sans-serif',
-              'box-shadow:0 0 0 3px rgba(245,165,36,.45), 0 2px 10px rgba(0,0,0,.35)',
-              'pointer-events:none',
-            ].join(';')
-            d.body.appendChild(el)
-          }
-          el.style.left = `${pin.x}%`
-          el.style.top = `${y}px`
+         Позиції беруться з лога: `x` — відсоток ширини, `y` — піксель від
+         верху документа, як їх зберіг оверлей. Правки без координат (старі
+         записи) просто не малюються. */
+      let pinObs = null
+      let pinBeat = 0
+      let pinDoc = null      // документ, у якому вже прокрутили до головної
+      let pinWatched = null  // документ, за яким уже стежить observer
 
-          /* Keep going until the document is genuinely tall enough for the
-             pin's position to mean anything — otherwise we would scroll to a
-             page that has not been laid out yet. */
-          const tall = d.documentElement.scrollHeight > y + 40
-          if (tall) {
-            frame.contentWindow.scrollTo({ top: Math.max(0, y - 220) })
-          }
-          if (++tries < 40 && !tall) setTimeout(place, 100)
+      function stopPins() {
+        if (pinObs) { pinObs.disconnect(); pinObs = null }
+        if (pinBeat) { clearInterval(pinBeat); pinBeat = 0 }
+        pinDoc = null; pinWatched = null
+      }
+
+      /* Той самий знак, що й в оверлеї (`.smn-pin`), тільки не з Shadow DOM:
+         значення токенів світлої теми оверлея внесені літералами, бо документ
+         застосунку про них ніколи не чув і не мусить. Форма, розмір, ґрунт,
+         зсув -9px і тінь — звідти ж, щоб мітка в шухляді й мітка в оверлеї
+         читались як один знак, а не два схожі.
+
+         Головна мітка (рядок, який відкрили) несе нейтральний ореол — той
+         самий, яким оверлей позначає пін із відкритою панеллю. Решта правок
+         цього екрана стоять тихіше: те саме коло, приглушене. */
+      const PIN_BASE = [
+        'position:absolute',
+        'transform:translate(-9px,-9px)',
+        'display:inline-flex',
+        'align-items:center',
+        'justify-content:center',
+        'box-sizing:border-box',
+        'width:20px',
+        'height:20px',
+        'border-radius:50%',
+        'border:1px solid oklch(0 0 0 / 0.15)',
+        'background:oklch(1 0 0)',
+        "font:500 10.5px/1 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif",
+        'font-variant-numeric:tabular-nums',
+        'pointer-events:none',
+      ].join(';')
+      const PIN_SHADOW = '0 16px 40px oklch(0.2 0.01 265 / 0.22)'
+
+      function makePin(d, p) {
+        const el = d.createElement('div')
+        el.className = 'fixlog-pin'
+        el.dataset.num = p.num || ''
+        el.textContent = p.num || '·'
+        el.style.cssText = PIN_BASE +
+          (p.main
+            ? `;color:oklch(0.28 0.012 265);box-shadow:${PIN_SHADOW}, 0 0 0 2px oklch(0 0 0 / 0.25)`
+            : `;color:oklch(0.36 0.012 265);box-shadow:${PIN_SHADOW};opacity:.55`)
+        el.style.left = `${p.x}%`
+        el.style.top = `${Number(p.y) || 0}px`
+        return el
+      }
+
+      /* Ідемпотентна: якщо шар на місці — не робить нічого. Саме тому її
+         можна безпечно смикати і з таймера, і з observer'а, і з `load`. */
+      function paintPins() {
+        if (!drPins.length) return
+        const frame = $('drFrame')
+        let d
+        try { d = frame.contentDocument } catch { return } // navigated cross-origin
+        if (!d || !d.body) return
+
+        let layer = d.getElementById('fixlog-pins')
+        if (!layer) {
+          layer = d.createElement('div')
+          layer.id = 'fixlog-pins'
+          /* Один шар на всі мітки: SPA зносить його цілком або не зносить
+             зовсім, тож і перевірка одна — «шар на місці?». */
+          layer.style.cssText =
+            'position:absolute;left:0;top:0;width:100%;height:0;margin:0;padding:0;' +
+            'border:0;z-index:2147483647;pointer-events:none'
+          for (const p of drPins) layer.appendChild(makePin(d, p))
+          d.body.appendChild(layer)
         }
 
-        place()
+        watchPins(d)
+
+        /* Прокрутка до головної мітки — один раз на документ: після
+           перемальовування дерева мітка має тихо повернутись на місце, а не
+           смикнути екран під руками. Новий документ (релоуд) — новий раз, бо
+           сторінка й так почалася згори. */
+        const main = drPins.find((p) => p.main)
+        if (main && pinDoc !== d) {
+          const y = Number(main.y) || 0
+          if (d.documentElement.scrollHeight > y + 40) {
+            pinDoc = d
+            frame.contentWindow.scrollTo({ top: Math.max(0, y - 220) })
+          }
+        }
+      }
+
+      /* Реагуємо ТІЛЬКИ на відсутність шару: інакше власна ж вставка будила б
+         observer по колу. Документ у кадрі змінюється (релоуд) — переклеюємось
+         на новий `body`. */
+      function watchPins(d) {
+        if (pinWatched === d || !window.MutationObserver) return
+        if (pinObs) pinObs.disconnect()
+        pinWatched = d
+        pinObs = new MutationObserver(() => {
+          if (!d.getElementById('fixlog-pins')) paintPins()
+        })
+        pinObs.observe(d.body, { childList: true, subtree: true })
+      }
+
+      /* Добір-таймер — третій сторож, і він тут не «про всяк випадок».
+         Observer прив'язаний до конкретного `body`; поки після релоуду не
+         спрацював `load`, стежити нема за чим, і саме в цю щілину мітка й
+         зникала. Опитування дешеве: один `getElementById` раз на 400 мс, і
+         тільки поки шухляда відкрита. */
+      function startPins() {
+        paintPins()
+        if (!pinBeat) pinBeat = setInterval(paintPins, 400)
       }
 
       /* Group-header route → drawer with no row context: cursor parks at -1
@@ -2802,7 +2744,7 @@
         const b = e.target.closest('[data-open-route]')
         if (!b) return
         cursor = -1
-        openDrawer(b.dataset.openRoute, null, '', null)
+        openDrawer(b.dataset.openRoute, '', null)
       })
 
       $('drScrim').addEventListener('click', closeDrawer)
@@ -3333,7 +3275,7 @@
           const created = Date.parse(a.createdAt || '') || a.timestamp || 0
           /* Пін. Нота більше не носить готових x/y тулбара — є `rect`
              (getBoundingClientRect у мить кліку) і `viewport`. Звідси x у
-             відсотках ширини й y у пікселях, як їх чекає dropPin. Прокрутки
+             відсотках ширини й y у пікселях, як їх чекають мітки шухляди. Прокрутки
              в контракті немає, тож на прокрученому екрані пін сяде вище за
              сам елемент — це наближення з реальних даних, а не вигаданe
              поле; краще приблизний маркер, ніж жодного. */
